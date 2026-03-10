@@ -73,3 +73,36 @@ class TestToolMetadata:
         """TOOL_METADATA should cover all unique tool types from PLUGIN_NAME_MAP."""
         unique_types = {tool_type for tool_type, _cat in PLUGIN_NAME_MAP.values()}
         assert unique_types <= set(TOOL_METADATA.keys()), "TOOL_METADATA missing some PLUGIN_NAME_MAP types"
+
+
+class TestAlternatePluginNames:
+    """Alteryx uses multiple plugin class names for the same tool.
+
+    Verify all known variants are mapped.
+    """
+
+    @pytest.mark.parametrize(
+        "plugin_name,expected_tool_type",
+        [
+            # Union has two plugin names across Alteryx versions
+            ("AlteryxBasePluginsGui.UnionV2.UnionV2", "Union"),
+            ("AlteryxBasePluginsGui.Union.Union", "Union"),
+            # Summarize appears in both base and spatial plugin namespaces
+            ("AlteryxBasePluginsGui.Summarize.Summarize", "Summarize"),
+            ("AlteryxSpatialPluginsGui.Summarize.Summarize", "Summarize"),
+            # Interface tools with Questions. namespace
+            ("AlteryxGuiToolkit.NumericUpDown.NumericUpDown", "NumericUpDown"),
+            ("AlteryxGuiToolkit.Questions.NumericUpDown.NumericUpDown", "NumericUpDown"),
+            ("AlteryxGuiToolkit.Questions.Tab.Tab", "Tab"),
+            # Action in both namespaces
+            ("AlteryxBasePluginsGui.Action.Action", "Action"),
+            ("AlteryxGuiToolkit.Action.Action", "Action"),
+            # New tool types
+            ("AlteryxBasePluginsGui.Directory.Directory", "Directory"),
+            ("AlteryxBasePluginsGui.DynamicRename.DynamicRename", "DynamicRename"),
+        ],
+    )
+    def test_alternate_plugin_name_mapped(self, plugin_name: str, expected_tool_type: str):
+        assert plugin_name in PLUGIN_NAME_MAP, f"{plugin_name} not in PLUGIN_NAME_MAP"
+        tool_type, _category = PLUGIN_NAME_MAP[plugin_name]
+        assert tool_type == expected_tool_type

@@ -109,6 +109,50 @@ class TestFilterNode:
         assert ".filter(" in content
 
 
+    def test_filter_node_empty_expression_does_not_crash(self, generator: PySparkGenerator):
+        """A FilterNode with an empty expression should generate a passthrough, not crash."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
+        filt = FilterNode(
+            node_id=2,
+            original_tool_type="Filter",
+            expression="",
+        )
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(filt)
+        dag.add_edge(1, 2)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+
+        # Should produce a passthrough (True = input, False = empty) with a TODO comment
+        assert "df_2_true" in content
+        assert "df_2_false" in content
+        assert "TODO" in content
+        # Should NOT crash or contain .filter() call
+        assert ".filter(_filter_cond" not in content
+        # Should produce a warning
+        assert any("no expression" in w for w in output.warnings)
+
+    def test_filter_node_whitespace_expression_does_not_crash(self, generator: PySparkGenerator):
+        """A FilterNode with a whitespace-only expression should be treated as empty."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
+        filt = FilterNode(
+            node_id=2,
+            original_tool_type="Filter",
+            expression="   ",
+        )
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(filt)
+        dag.add_edge(1, 2)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+        assert "TODO" in content
+        assert any("no expression" in w for w in output.warnings)
+
+
 class TestFormulaNode:
     def test_formula_node_with_expression(self, generator: PySparkGenerator):
         """Formula with a translated expression produces .withColumn() call."""

@@ -344,3 +344,36 @@ class TestSQLInExpr:
         assert "IN" in result
         assert "'Red'" in result
         assert "'Blue'" in result
+
+
+# ---------------------------------------------------------------------------
+# Empty expression guard tests
+# ---------------------------------------------------------------------------
+
+
+class TestEmptyExpressionGuard:
+    """translate_string should raise BaseTranslationError for empty input."""
+
+    def test_pyspark_translate_string_empty(self, pyspark_translator: PySparkTranslator) -> None:
+        from a2d.expressions.base_translator import BaseTranslationError
+
+        with pytest.raises(BaseTranslationError, match="Empty expression"):
+            pyspark_translator.translate_string("")
+
+    def test_pyspark_translate_string_whitespace(self, pyspark_translator: PySparkTranslator) -> None:
+        from a2d.expressions.base_translator import BaseTranslationError
+
+        with pytest.raises(BaseTranslationError, match="Empty expression"):
+            pyspark_translator.translate_string("   ")
+
+    def test_sql_translate_string_empty(self, sql_translator: SparkSQLTranslator) -> None:
+        from a2d.expressions.base_translator import BaseTranslationError
+
+        with pytest.raises(BaseTranslationError, match="Empty expression"):
+            sql_translator.translate_string("")
+
+    def test_sql_translate_string_whitespace(self, sql_translator: SparkSQLTranslator) -> None:
+        from a2d.expressions.base_translator import BaseTranslationError
+
+        with pytest.raises(BaseTranslationError, match="Empty expression"):
+            sql_translator.translate_string("  \t  ")

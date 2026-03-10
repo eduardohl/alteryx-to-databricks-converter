@@ -268,3 +268,20 @@ class TestErrorHandling:
     def test_unclosed_paren(self, parser: ExpressionParser) -> None:
         with pytest.raises(ParserError):
             parser.parse("([A] + [B]")
+
+    def test_empty_string_raises_parser_error(self, parser: ExpressionParser) -> None:
+        with pytest.raises(ParserError):
+            parser.parse("")
+
+    def test_parser_error_is_base_translation_error(self) -> None:
+        """ParserError should be catchable by except BaseTranslationError."""
+        from a2d.expressions.base_translator import BaseTranslationError
+
+        assert issubclass(ParserError, BaseTranslationError)
+
+    def test_parser_error_caught_by_base_translation_error(self, parser: ExpressionParser) -> None:
+        """Verify generators' except BaseTranslationError catches ParserError."""
+        from a2d.expressions.base_translator import BaseTranslationError
+
+        with pytest.raises(BaseTranslationError):
+            parser.parse("")

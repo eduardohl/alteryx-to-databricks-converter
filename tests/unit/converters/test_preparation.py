@@ -62,6 +62,27 @@ class TestFilterConverter:
         assert isinstance(result, FilterNode)
         assert result.mode == "simple"
 
+    def test_filter_empty_configuration_produces_empty_expression(self):
+        """A Filter with no Expression and no Simple-mode fields produces empty expression."""
+        node = make_node(
+            tool_type="Filter",
+            configuration={},
+        )
+        result = ConverterRegistry.convert_node(node, DEFAULT_CONFIG)
+        assert isinstance(result, FilterNode)
+        assert result.expression == ""
+
+    def test_filter_custom_mode_empty_expression(self):
+        """A Filter in custom mode with no Expression element produces empty expression."""
+        node = make_node(
+            tool_type="Filter",
+            configuration={"Mode": "Custom"},
+        )
+        result = ConverterRegistry.convert_node(node, DEFAULT_CONFIG)
+        assert isinstance(result, FilterNode)
+        assert result.mode == "custom"
+        assert result.expression == ""
+
 
 class TestFormulaConverter:
     def test_formula_single_field(self):

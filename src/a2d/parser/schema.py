@@ -121,6 +121,7 @@ PLUGIN_NAME_MAP: dict[str, tuple[str, str]] = {
     "AlteryxBasePluginsGui.BrowseV2.BrowseV2": ("Browse", "io"),
     "AlteryxBasePluginsGui.DynamicInput.DynamicInput": ("DynamicInput", "developer"),
     "AlteryxBasePluginsGui.DynamicOutput.DynamicOutput": ("DynamicOutput", "developer"),
+    "AlteryxBasePluginsGui.Directory.Directory": ("Directory", "io"),
     # ── Preparation ─────────────────────────────────────────────────────
     "AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect": ("Select", "preparation"),
     "AlteryxBasePluginsGui.Filter.Filter": ("Filter", "preparation"),
@@ -134,10 +135,12 @@ PLUGIN_NAME_MAP: dict[str, tuple[str, str]] = {
     "AlteryxBasePluginsGui.DataCleansing.DataCleansing": ("DataCleansing", "preparation"),
     "AlteryxBasePluginsGui.GenerateRows.GenerateRows": ("GenerateRows", "preparation"),
     "AlteryxBasePluginsGui.AutoField.AutoField": ("AutoField", "preparation"),
+    "AlteryxBasePluginsGui.DynamicRename.DynamicRename": ("DynamicRename", "preparation"),
     "AlteryxBasePluginsGui.Imputation.Imputation": ("Imputation", "preparation"),
     # ── Join ────────────────────────────────────────────────────────────
     "AlteryxBasePluginsGui.Join.Join": ("Join", "join"),
     "AlteryxBasePluginsGui.UnionV2.UnionV2": ("Union", "join"),
+    "AlteryxBasePluginsGui.Union.Union": ("Union", "join"),  # older plugin variant
     "AlteryxBasePluginsGui.FindReplace.FindReplace": ("FindReplace", "join"),
     "AlteryxBasePluginsGui.AppendFields.AppendFields": ("AppendFields", "join"),
     "AlteryxBasePluginsGui.JoinMultiple.JoinMultiple": ("JoinMultiple", "join"),
@@ -149,6 +152,7 @@ PLUGIN_NAME_MAP: dict[str, tuple[str, str]] = {
     "AlteryxBasePluginsGui.XMLParse.XMLParse": ("XMLParse", "parse"),
     # ── Transform ───────────────────────────────────────────────────────
     "AlteryxBasePluginsGui.Summarize.Summarize": ("Summarize", "transform"),
+    "AlteryxSpatialPluginsGui.Summarize.Summarize": ("Summarize", "transform"),  # spatial variant
     "AlteryxBasePluginsGui.CrossTab.CrossTab": ("CrossTab", "transform"),
     "AlteryxBasePluginsGui.Transpose.Transpose": ("Transpose", "transform"),
     "AlteryxBasePluginsGui.RunningTotal.RunningTotal": ("RunningTotal", "transform"),
@@ -182,6 +186,9 @@ PLUGIN_NAME_MAP: dict[str, tuple[str, str]] = {
     "AlteryxGuiToolkit.ListBox.ListBox": ("ListBox", "interface"),
     "AlteryxGuiToolkit.TextBox.TextBox": ("TextBox", "interface"),
     "AlteryxGuiToolkit.NumericUpDown.NumericUpDown": ("NumericUpDown", "interface"),
+    "AlteryxGuiToolkit.Questions.Tab.Tab": ("Tab", "interface"),
+    "AlteryxGuiToolkit.Questions.NumericUpDown.NumericUpDown": ("NumericUpDown", "interface"),
+    "AlteryxGuiToolkit.Action.Action": ("Action", "workflow"),
     "AlteryxBasePluginsGui.MacroInput.MacroInput": ("MacroInput", "interface"),
     "AlteryxBasePluginsGui.MacroOutput.MacroOutput": ("MacroOutput", "interface"),
     # ── Workflow orchestration ────────────────────────────────────────
@@ -296,6 +303,11 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
         "Maps to display() for data preview",
         "display()",
     ),
+    "Directory": ToolMetadata(
+        "unsupported",
+        "Lists files in a directory; maps to dbutils.fs.ls or Python glob",
+        "dbutils.fs.ls / glob",
+    ),
     "DynamicInput": ToolMetadata(
         "deterministic",
         "Maps wildcard file reads to spark.read.load(pattern)",
@@ -371,6 +383,11 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
         "deterministic",
         "Maps imputation methods to na.fill with computed statistics",
         "DataFrame.na.fill",
+    ),
+    "DynamicRename": ToolMetadata(
+        "unsupported",
+        "Dynamic column renaming via formula or lookup; maps to toDF or withColumnRenamed",
+        "toDF / withColumnRenamed",
     ),
     "Arrange": ToolMetadata(
         "deterministic",
@@ -579,6 +596,11 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
         "mapping",
         "Maps to dbutils.widgets.text with numeric validation",
         "dbutils.widgets",
+    ),
+    "Tab": ToolMetadata(
+        "unsupported",
+        "Visual grouping tab for interface tools — no-op in Databricks",
+        "no-op (visual only)",
     ),
     "RadioButton": ToolMetadata(
         "mapping",

@@ -343,18 +343,30 @@ class PySparkGenerator(CodeGenerator):
         out_false = f"df_{node.node_id}_false"
         warnings: list[str] = []
 
-        try:
-            expr = self._translator.translate_string(node.expression)
-            warnings.extend(self._translator.warnings)
-        except BaseTranslationError as exc:
-            expr = f'F.expr("{node.expression}")'
-            warnings.append(f"Filter expression fallback for node {node.node_id}: {exc}")
+        if not node.expression or not node.expression.strip():
+            warnings.append(
+                f"Filter node {node.node_id} has no expression — "
+                "passing all rows to True output (no False output)"
+            )
+            lines = [
+                f"# TODO: Filter node {node.node_id} — expression could not be extracted from workflow XML",
+                f"{out_true} = {inp}",
+                f"{out_false} = {inp}.limit(0)  # empty — no filter expression available",
+            ]
+        else:
+            try:
+                expr = self._translator.translate_string(node.expression)
+                warnings.extend(self._translator.warnings)
+            except BaseTranslationError as exc:
+                expr = f'F.expr("{node.expression}")'
+                warnings.append(f"Filter expression fallback for node {node.node_id}: {exc}")
 
-        lines = [
-            f"_filter_cond_{node.node_id} = {expr}",
-            f"{out_true} = {inp}.filter(_filter_cond_{node.node_id})",
-            f"{out_false} = {inp}.filter(~(_filter_cond_{node.node_id}))",
-        ]
+            lines = [
+                f"_filter_cond_{node.node_id} = {expr}",
+                f"{out_true} = {inp}.filter(_filter_cond_{node.node_id})",
+                f"{out_false} = {inp}.filter(~(_filter_cond_{node.node_id}))",
+            ]
+
         return NodeCodeResult(
             code_lines=lines,
             output_vars={

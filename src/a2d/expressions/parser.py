@@ -34,11 +34,16 @@ from a2d.expressions.ast import (
     RowRef,
     UnaryOp,
 )
+from a2d.expressions.errors import BaseTranslationError
 from a2d.expressions.tokenizer import AlteryxTokenizer, Token, TokenType
 
 
-class ParserError(Exception):
-    """Error raised when the parser encounters invalid syntax."""
+class ParserError(BaseTranslationError):
+    """Error raised when the parser encounters invalid syntax.
+
+    Inherits from ``BaseTranslationError`` so that generators' catch-all
+    blocks for expression failures handle parse errors gracefully.
+    """
 
     def __init__(self, message: str, token: Token | None = None):
         if token is not None:

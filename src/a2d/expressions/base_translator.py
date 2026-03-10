@@ -22,11 +22,11 @@ from a2d.expressions.ast import (
     RowRef,
     UnaryOp,
 )
+from a2d.expressions.errors import BaseTranslationError
 from a2d.expressions.parser import ExpressionParser
 
-
-class BaseTranslationError(Exception):
-    """Raised when the translator cannot handle an AST node."""
+# Re-export for backwards compatibility — existing code imports from here.
+__all__ = ["BaseExpressionTranslator", "BaseTranslationError"]
 
 
 class BaseExpressionTranslator(ABC):
@@ -43,7 +43,13 @@ class BaseExpressionTranslator(ABC):
         return self._visit(expr)
 
     def translate_string(self, expression: str) -> str:
-        """Parse and translate an Alteryx expression string."""
+        """Parse and translate an Alteryx expression string.
+
+        Raises ``BaseTranslationError`` (or a subclass) if the expression
+        is empty or cannot be parsed/translated.
+        """
+        if not expression or not expression.strip():
+            raise BaseTranslationError("Empty expression — no filter/formula content found in workflow XML")
         parser = ExpressionParser()
         ast = parser.parse(expression)
         return self.translate(ast)

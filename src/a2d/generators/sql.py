@@ -230,6 +230,14 @@ class SQLGenerator(CodeGenerator):
 
         if isinstance(node, FilterNode):
             inp = self._get_single_input(input_ctes)
+            if not node.expression or not node.expression.strip():
+                warnings.append(
+                    f"Filter node {node.node_id} has no expression — returning all rows"
+                )
+                return (
+                    f"SELECT * FROM {inp} /* TODO: Filter node {node.node_id} — expression not found in workflow XML */",
+                    warnings,
+                )
             try:
                 expr = self._translator.translate_string(node.expression)
             except BaseTranslationError:

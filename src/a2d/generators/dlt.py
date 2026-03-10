@@ -251,6 +251,14 @@ class DLTGenerator(CodeGenerator):
 
         if isinstance(node, FilterNode):
             inp = self._get_single_input_read(input_tables)
+            if not node.expression or not node.expression.strip():
+                warnings.append(
+                    f"Filter node {node.node_id} has no expression — returning all rows"
+                )
+                return [
+                    f"# TODO: Filter node {node.node_id} — expression could not be extracted from workflow XML",
+                    f"return {inp}",
+                ], warnings
             try:
                 expr = self._translator.translate_string(node.expression)
             except BaseTranslationError:
