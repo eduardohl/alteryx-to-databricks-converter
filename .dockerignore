@@ -1,0 +1,16 @@
+.git
+.github
+.mypy_cache
+.pytest_cache
+.ruff_cache
+__pycache__
+*.egg-info
+htmlcov
+node_modules
+frontend/node_modules
+tests
+*.md
+.pre-commit-config.yaml
+.dockerignore
+Dockerfile
+Makefile

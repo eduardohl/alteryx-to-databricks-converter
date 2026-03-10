@@ -1,0 +1,478 @@
+"""Tests for the PySpark notebook code generator."""
+
+from __future__ import annotations
+
+import pytest
+
+from a2d.config import ConversionConfig
+from a2d.generators.pyspark import PySparkGenerator
+from a2d.ir.graph import WorkflowDAG
+from a2d.ir.nodes import (
+    AggAction,
+    AggregationField,
+    FieldAction,
+    FieldOperation,
+    FilterNode,
+    FormulaField,
+    FormulaNode,
+    JoinKey,
+    JoinNode,
+    LiteralDataNode,
+    ReadNode,
+    RecordIDNode,
+    SelectNode,
+    SortField,
+    SortNode,
+    SummarizeNode,
+    UnionNode,
+    UniqueNode,
+    UnsupportedNode,
+    WriteNode,
+)
+
+
+@pytest.fixture
+def config() -> ConversionConfig:
+    return ConversionConfig()
+
+
+@pytest.fixture
+def generator(config: ConversionConfig) -> PySparkGenerator:
+    return PySparkGenerator(config)
+
+
+def _make_dag_with_node(node, predecessors=None):
+    """Helper to build a simple DAG with one node, optionally connected to predecessors."""
+    dag = WorkflowDAG()
+    if predecessors:
+        for pred in predecessors:
+            dag.add_node(pred)
+    dag.add_node(node)
+    if predecessors:
+        for pred in predecessors:
+            dag.add_edge(pred.node_id, node.node_id)
+    return dag
+
+
+class TestReadNode:
+    def test_simple_read_node(self, generator: PySparkGenerator):
+        """Generate code for a ReadNode producing a spark.read call."""
+        node = ReadNode(
+            node_id=1,
+            original_tool_type="Input Data",
+            file_path="/data/input.csv",
+            file_format="csv",
+            has_header=True,
+        )
+        dag = _make_dag_with_node(node)
+        output = generator.generate(dag, "test_workflow")
+
+        assert len(output.files) == 1
+        content = output.files[0].content
+        assert 'spark.read.format("csv")' in content
+        assert '"/data/input.csv"' in content
+        assert "df_1" in content
+
+    def test_read_node_database(self, generator: PySparkGenerator):
+        """ReadNode with database source generates spark.table()."""
+        node = ReadNode(
+            node_id=1,
+            original_tool_type="Input Data",
+            source_type="database",
+            table_name="catalog.schema.my_table",
+        )
+        dag = _make_dag_with_node(node)
+        output = generator.generate(dag)
+        content = output.files[0].content
+        assert 'spark.table("catalog.schema.my_table")' in content
+
+
+class TestFilterNode:
+    def test_filter_node_generates_two_branches(self, generator: PySparkGenerator):
+        """Filter should produce both true and false DataFrames."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
+        filt = FilterNode(
+            node_id=2,
+            original_tool_type="Filter",
+            expression="[Age] > 25",
+        )
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(filt)
+        dag.add_edge(1, 2)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+
+        assert "df_2_true" in content
+        assert "df_2_false" in content
+        assert ".filter(" in content
+
+
+class TestFormulaNode:
+    def test_formula_node_with_expression(self, generator: PySparkGenerator):
+        """Formula with a translated expression produces .withColumn() call."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
+        formula = FormulaNode(
+            node_id=2,
+            original_tool_type="Formula",
+            formulas=[
+                FormulaField(
+                    output_field="FullName",
+                    expression='[FirstName] + " " + [LastName]',
+                )
+            ],
+        )
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(formula)
+        dag.add_edge(1, 2)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+
+        assert 'withColumn("FullName"' in content
+        assert "df_2" in content
+
+
+class TestJoinNode:
+    def test_join_node_with_keys(self, generator: PySparkGenerator):
+        """Join two inputs produces .join() with key condition."""
+        left = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/left.csv", file_format="csv")
+        right = ReadNode(node_id=2, original_tool_type="Input Data", file_path="/right.csv", file_format="csv")
+        join = JoinNode(
+            node_id=3,
+            original_tool_type="Join",
+            join_keys=[JoinKey(left_field="id", right_field="id")],
+            join_type="inner",
+        )
+
+        dag = WorkflowDAG()
+        dag.add_node(left)
+        dag.add_node(right)
+        dag.add_node(join)
+        dag.add_edge(1, 3, destination_anchor="Left")
+        dag.add_edge(2, 3, destination_anchor="Right")
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+
+        assert "df_3_join" in content
+        assert ".join(" in content
+        assert '"id"' in content
+        assert '"inner"' in content
+
+
+class TestSummarizeNode:
+    def test_summarize_node(self, generator: PySparkGenerator):
+        """Summarize produces groupBy + agg."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
+        summ = SummarizeNode(
+            node_id=2,
+            original_tool_type="Summarize",
+            aggregations=[
+                AggregationField(field_name="Department", action=AggAction.GROUP_BY),
+                AggregationField(
+                    field_name="Salary",
+                    action=AggAction.SUM,
+                    output_field_name="TotalSalary",
+                ),
+                AggregationField(
+                    field_name="EmployeeID",
+                    action=AggAction.COUNT,
+                    output_field_name="HeadCount",
+                ),
+            ],
+        )
+
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(summ)
+        dag.add_edge(1, 2)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+
+        assert "groupBy(" in content
+        assert '"Department"' in content
+        assert "F.sum" in content
+        assert '"TotalSalary"' in content
+        assert "F.count" in content
+        assert '"HeadCount"' in content
+
+
+class TestSelectNode:
+    def test_select_node_renames(self, generator: PySparkGenerator):
+        """SelectNode with renames generates .withColumnRenamed()."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
+        sel = SelectNode(
+            node_id=2,
+            original_tool_type="Select",
+            field_operations=[
+                FieldOperation(
+                    field_name="OldName",
+                    action=FieldAction.RENAME,
+                    rename_to="NewName",
+                    selected=True,
+                ),
+                FieldOperation(
+                    field_name="DropMe",
+                    action=FieldAction.DESELECT,
+                    selected=False,
+                ),
+            ],
+        )
+
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(sel)
+        dag.add_edge(1, 2)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+
+        assert 'withColumnRenamed("OldName", "NewName")' in content
+        assert 'drop("DropMe")' in content
+
+
+class TestSortNode:
+    def test_sort_node(self, generator: PySparkGenerator):
+        """SortNode generates .orderBy() with asc/desc."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
+        sort = SortNode(
+            node_id=2,
+            original_tool_type="Sort",
+            sort_fields=[
+                SortField(field_name="Name", ascending=True),
+                SortField(field_name="Age", ascending=False),
+            ],
+        )
+
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(sort)
+        dag.add_edge(1, 2)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+
+        assert ".orderBy(" in content
+        assert '"Name"' in content
+        assert ".asc()" in content
+        assert '"Age"' in content
+        assert ".desc()" in content
+
+
+class TestUnsupportedNode:
+    def test_unsupported_node_as_comment(self, generator: PySparkGenerator):
+        """UnsupportedNode generates a comment block with guidance."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
+        unsup = UnsupportedNode(
+            node_id=2,
+            original_tool_type="SpatialMatch",
+            unsupported_reason="Geospatial tools are not supported",
+        )
+
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(unsup)
+        dag.add_edge(1, 2)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+
+        assert "UNSUPPORTED" in content
+        assert "SpatialMatch" in content
+        assert "Geospatial tools are not supported" in content
+        assert "passthrough placeholder" in content
+        assert len(output.warnings) >= 1
+
+
+class TestNotebookFormat:
+    def test_notebook_format(self, generator: PySparkGenerator):
+        """Verify Databricks notebook header and command separators."""
+        node = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
+        dag = _make_dag_with_node(node)
+        output = generator.generate(dag)
+        content = output.files[0].content
+
+        assert content.startswith("# Databricks notebook source")
+        assert "# COMMAND ----------" in content
+        assert "from pyspark.sql import functions as F" in content
+        assert "from pyspark.sql import Window" in content
+
+
+class TestFullPipeline:
+    def test_full_pipeline(self, generator: PySparkGenerator):
+        """Build a small DAG (read -> filter -> summarize -> write), generate notebook."""
+        read = ReadNode(
+            node_id=1,
+            original_tool_type="Input Data",
+            file_path="/data/employees.csv",
+            file_format="csv",
+            has_header=True,
+        )
+        filt = FilterNode(
+            node_id=2,
+            original_tool_type="Filter",
+            expression="[Active] = 1",
+        )
+        summ = SummarizeNode(
+            node_id=3,
+            original_tool_type="Summarize",
+            aggregations=[
+                AggregationField(field_name="Department", action=AggAction.GROUP_BY),
+                AggregationField(field_name="Salary", action=AggAction.AVG, output_field_name="AvgSalary"),
+            ],
+        )
+        write = WriteNode(
+            node_id=4,
+            original_tool_type="Output Data",
+            file_path="/output/summary.parquet",
+            file_format="parquet",
+            write_mode="overwrite",
+        )
+
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(filt)
+        dag.add_node(summ)
+        dag.add_node(write)
+        dag.add_edge(1, 2)
+        dag.add_edge(2, 3, origin_anchor="True")
+        dag.add_edge(3, 4)
+
+        output = generator.generate(dag, "employees_pipeline")
+        assert len(output.files) == 1
+
+        content = output.files[0].content
+        assert output.files[0].filename == "employees_pipeline.py"
+
+        # Verify pipeline steps exist
+        assert "spark.read" in content
+        assert ".filter(" in content
+        assert "groupBy(" in content
+        assert ".write" in content
+
+        # Verify topological flow (df_1 used by filter, filter result used by summarize)
+        assert "df_1" in content
+        assert "df_2_true" in content
+        assert "df_3" in content
+
+        # Verify notebook structure
+        assert content.startswith("# Databricks notebook source")
+        command_separators = content.count("# COMMAND ----------")
+        assert command_separators >= 4  # imports + at least 4 node cells
+
+
+class TestEdgeCases:
+    def test_write_to_table(self, generator: PySparkGenerator):
+        """WriteNode with database destination generates .saveAsTable()."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
+        write = WriteNode(
+            node_id=2,
+            original_tool_type="Output Data",
+            destination_type="database",
+            table_name="catalog.schema.output_table",
+            write_mode="append",
+        )
+
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(write)
+        dag.add_edge(1, 2)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+        assert "saveAsTable" in content
+        assert "catalog.schema.output_table" in content
+        assert "append" in content
+
+    def test_literal_data_node(self, generator: PySparkGenerator):
+        """LiteralDataNode generates createDataFrame with rows and schema."""
+        node = LiteralDataNode(
+            node_id=1,
+            original_tool_type="Text Input",
+            field_names=["Name", "Age"],
+            data_rows=[["Alice", "30"], ["Bob", "25"]],
+        )
+        dag = _make_dag_with_node(node)
+        output = generator.generate(dag)
+        content = output.files[0].content
+
+        assert "createDataFrame" in content
+        assert "Alice" in content
+        assert "Name" in content
+
+    def test_union_node(self, generator: PySparkGenerator):
+        """UnionNode generates .unionByName()."""
+        r1 = ReadNode(node_id=1, original_tool_type="Input", file_path="/a.csv", file_format="csv")
+        r2 = ReadNode(node_id=2, original_tool_type="Input", file_path="/b.csv", file_format="csv")
+        union = UnionNode(node_id=3, original_tool_type="Union", allow_missing=True)
+
+        dag = WorkflowDAG()
+        dag.add_node(r1)
+        dag.add_node(r2)
+        dag.add_node(union)
+        dag.add_edge(1, 3, destination_anchor="Input1")
+        dag.add_edge(2, 3, destination_anchor="Input2")
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+        assert "unionByName" in content
+        assert "allowMissingColumns=True" in content
+
+    def test_unique_node(self, generator: PySparkGenerator):
+        """UniqueNode generates dropDuplicates and subtract."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
+        unique = UniqueNode(
+            node_id=2,
+            original_tool_type="Unique",
+            key_fields=["CustomerID", "Email"],
+        )
+
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(unique)
+        dag.add_edge(1, 2)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+        assert "dropDuplicates" in content
+        assert "CustomerID" in content
+        assert "df_2_unique" in content
+        assert "df_2_duplicate" in content
+
+    def test_record_id_node(self, generator: PySparkGenerator):
+        """RecordIDNode generates monotonically_increasing_id."""
+        read = ReadNode(node_id=1, original_tool_type="Input", file_path="/data.csv", file_format="csv")
+        rid = RecordIDNode(
+            node_id=2,
+            original_tool_type="RecordID",
+            output_field="RowNum",
+            starting_value=1,
+        )
+
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(rid)
+        dag.add_edge(1, 2)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+        assert "monotonically_increasing_id" in content
+        assert "RowNum" in content
+
+    def test_stats_tracking(self, generator: PySparkGenerator):
+        """Verify stats include total_nodes and unsupported_nodes."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
+        unsup = UnsupportedNode(node_id=2, original_tool_type="Mystery", unsupported_reason="Unknown")
+
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(unsup)
+        dag.add_edge(1, 2)
+
+        output = generator.generate(dag)
+        assert output.stats["total_nodes"] == 2
+        assert output.stats["unsupported_nodes"] == 1

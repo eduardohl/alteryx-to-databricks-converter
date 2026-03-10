@@ -1,0 +1,67 @@
+"""Converter for Alteryx Sample tool -> SampleNode."""
+
+from __future__ import annotations
+
+from a2d.config import ConversionConfig
+from a2d.converters.registry import ConverterRegistry, ToolConverter
+from a2d.converters.utils import ensure_list, safe_get
+from a2d.ir.nodes import IRNode, SampleNode
+from a2d.parser.schema import ParsedNode
+
+
+@ConverterRegistry.register
+class SampleConverter(ToolConverter):
+    """Converts Alteryx Sample to :class:`SampleNode`."""
+
+    @property
+    def supported_tool_types(self) -> list[str]:
+        return ["Sample"]
+
+    def convert(self, parsed_node: ParsedNode, config: ConversionConfig) -> IRNode:
+        cfg = parsed_node.configuration
+
+        mode = safe_get(cfg, "Mode", default="First")
+        n_str = safe_get(cfg, "N")
+        n_records = int(n_str) if n_str and n_str.isdigit() else None
+
+        pct_str = safe_get(cfg, "Percent")
+        percentage = None
+        if pct_str:
+            try:
+                percentage = float(pct_str)
+            except ValueError:
+                pass
+
+        # Map Alteryx mode strings to IR sample_method
+        mode_map = {
+            "First": "first",
+            "Last": "last",
+            "Random N": "random",
+            "Random Percent": "percent",
+            "Every Nth": "every_nth",
+            "1 in N": "every_nth",
+        }
+        sample_method = mode_map.get(mode, mode.lower())
+
+        # Group fields (Alteryx supports grouped sampling)
+        group_fields_section = cfg.get("GroupFields", {})
+        group_fields: list[str] = []
+        if isinstance(group_fields_section, dict):
+            raw = ensure_list(group_fields_section.get("Field", []))
+            for f in raw:
+                if isinstance(f, dict):
+                    group_fields.append(f.get("@field", f.get("@name", "")))
+                elif isinstance(f, str):
+                    group_fields.append(f)
+
+        return SampleNode(
+            node_id=parsed_node.tool_id,
+            original_tool_type=parsed_node.tool_type,
+            original_plugin_name=parsed_node.plugin_name,
+            annotation=parsed_node.annotation,
+            position=parsed_node.position,
+            sample_method=sample_method,
+            n_records=n_records,
+            percentage=percentage,
+            group_fields=group_fields,
+        )

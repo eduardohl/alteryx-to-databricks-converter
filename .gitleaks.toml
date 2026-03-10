@@ -1,0 +1,5 @@
+[allowlist]
+description = "Allow false positives in Shiki WASM syntax highlighting bundles"
+paths = [
+    '''frontend/dist/assets/wasm-.*\.js''',
+]

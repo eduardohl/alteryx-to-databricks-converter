@@ -1,0 +1,37 @@
+{
+  "name": "a2d_sample_workflow",
+  "description": "Migrated from Alteryx workflow: sample_workflow.yxmd",
+  "tags": {
+    "source": "alteryx",
+    "migrated_by": "a2d",
+    "original_workflow": "sample_workflow.yxmd"
+  },
+  "tasks": [
+    {
+      "task_key": "sample_workflow_main",
+      "description": "Run migrated workflow: sample_workflow",
+      "job_cluster_key": "default_cluster",
+      "notebook_task": {
+        "notebook_path": "/Workspace/Shared/a2d/sample_workflow",
+        "source": "WORKSPACE"
+      },
+      "timeout_seconds": 3600,
+      "max_retries": 0
+    }
+  ],
+  "job_clusters": [
+    {
+      "job_cluster_key": "default_cluster",
+      "new_cluster": {
+        "spark_version": "14.3.x-scala2.12",
+        "num_workers": 2,
+        "node_type_id": "Standard_DS3_v2",
+        "spark_conf": {
+          "spark.databricks.delta.preview.enabled": "true"
+        }
+      }
+    }
+  ],
+  "format": "MULTI_TASK",
+  "max_concurrent_runs": 1
+}

@@ -1,0 +1,1 @@
+import{j as a}from"./vendor-xyflow-B1KSos0B.js";import{d}from"./index-DbBl5x6Z.js";function m({className:r,...o}){return a.jsx("div",{className:d("rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6 shadow-sm",r),...o})}export{m as C};
