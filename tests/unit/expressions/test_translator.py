@@ -351,6 +351,22 @@ class TestSQLInExpr:
 # ---------------------------------------------------------------------------
 
 
+class TestFileGetFileName:
+    """Test FileGetFileName function translation."""
+
+    def test_pyspark_file_get_filename(self, pyspark_translator: PySparkTranslator) -> None:
+        result = pyspark_translator.translate_string('FileGetFileName([FilePath])')
+        assert "F.element_at" in result
+        assert "F.split" in result
+        assert "F.regexp_replace" in result
+
+    def test_sql_file_get_filename(self, sql_translator: SparkSQLTranslator) -> None:
+        result = sql_translator.translate_string('FileGetFileName([FilePath])')
+        assert "ELEMENT_AT" in result
+        assert "SPLIT" in result
+        assert "REGEXP_REPLACE" in result
+
+
 class TestEmptyExpressionGuard:
     """translate_string should raise BaseTranslationError for empty input."""
 

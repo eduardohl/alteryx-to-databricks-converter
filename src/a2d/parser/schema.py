@@ -304,9 +304,9 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
         "display()",
     ),
     "Directory": ToolMetadata(
-        "unsupported",
-        "Lists files in a directory; maps to dbutils.fs.ls or Python glob",
-        "dbutils.fs.ls / glob",
+        "deterministic",
+        "Lists files in a directory; maps to dbutils.fs.ls",
+        "dbutils.fs.ls",
     ),
     "DynamicInput": ToolMetadata(
         "deterministic",
@@ -385,7 +385,7 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
         "DataFrame.na.fill",
     ),
     "DynamicRename": ToolMetadata(
-        "unsupported",
+        "deterministic",
         "Dynamic column renaming via formula or lookup; maps to toDF or withColumnRenamed",
         "toDF / withColumnRenamed",
     ),

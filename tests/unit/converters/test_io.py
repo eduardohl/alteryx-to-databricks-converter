@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from a2d.converters import ConverterRegistry
-from a2d.ir.nodes import BrowseNode, LiteralDataNode, ReadNode, WriteNode
+from a2d.ir.nodes import BrowseNode, DirectoryNode, LiteralDataNode, ReadNode, WriteNode
 
 from .conftest import DEFAULT_CONFIG, make_node
 
@@ -116,6 +116,44 @@ class TestTextInputConverter:
         assert isinstance(result, LiteralDataNode)
         assert result.num_fields == 0
         assert result.num_records == 0
+
+
+class TestDirectoryConverter:
+    def test_directory_basic(self):
+        node = make_node(
+            tool_type="Directory",
+            configuration={
+                "Directory": "C:\\data\\files",
+                "FileSpec": "*.csv",
+                "IncludeSubDirs": {"@value": "False"},
+            },
+        )
+        result = ConverterRegistry.convert_node(node, DEFAULT_CONFIG)
+        assert isinstance(result, DirectoryNode)
+        assert result.directory_path == "C:\\data\\files"
+        assert result.file_pattern == "*.csv"
+        assert result.include_subdirs is False
+
+    def test_directory_with_subdirs(self):
+        node = make_node(
+            tool_type="Directory",
+            configuration={
+                "Directory": "/mnt/data",
+                "FileSpec": "*.*",
+                "IncludeSubDirs": {"@value": "True"},
+            },
+        )
+        result = ConverterRegistry.convert_node(node, DEFAULT_CONFIG)
+        assert isinstance(result, DirectoryNode)
+        assert result.include_subdirs is True
+
+    def test_directory_defaults(self):
+        node = make_node(tool_type="Directory", configuration={})
+        result = ConverterRegistry.convert_node(node, DEFAULT_CONFIG)
+        assert isinstance(result, DirectoryNode)
+        assert result.directory_path == ""
+        assert result.file_pattern == "*"
+        assert result.include_subdirs is False
 
 
 class TestBrowseConverter:

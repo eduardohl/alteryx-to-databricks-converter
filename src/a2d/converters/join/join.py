@@ -20,10 +20,29 @@ def _parse_join_keys(cfg: dict) -> list[JoinKey]:
     join_info = cfg.get("JoinInfo", cfg.get("JoinFields", {}))
     if isinstance(join_info, dict):
         raw_keys = ensure_list(join_info.get("Field", join_info.get("JoinField", [])))
+    elif isinstance(join_info, list):
+        # Old XML format: two <JoinInfo connection="Left/Right"> elements,
+        # each with a @field attribute.  Pair them positionally.
+        left_fields: list[str] = []
+        right_fields: list[str] = []
+        for entry in join_info:
+            if not isinstance(entry, dict):
+                continue
+            conn = entry.get("@connection", "")
+            field_name = entry.get("@field", "")
+            if conn == "Left":
+                left_fields.append(field_name)
+            elif conn == "Right":
+                right_fields.append(field_name)
+        keys: list[JoinKey] = []
+        for lf, rf in zip(left_fields, right_fields):
+            if lf and rf:
+                keys.append(JoinKey(left_field=lf, right_field=rf))
+        return keys
     else:
         raw_keys = []
 
-    keys: list[JoinKey] = []
+    keys = []
     for k in raw_keys:
         if isinstance(k, dict):
             left = k.get("@left", k.get("@LeftField", ""))

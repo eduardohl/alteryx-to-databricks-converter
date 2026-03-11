@@ -60,3 +60,7 @@ frontend/.vite/
 # Database files
 *.db
 *.sqlite
+
+# Spreadsheets (may contain customer data)
+*.xlsx
+*.xls

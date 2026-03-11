@@ -11,7 +11,8 @@ class BaseTranslationError(Exception):
     """Raised when the expression engine cannot process an expression.
 
     Concrete subclasses:
-    - ``ParserError`` — tokenisation / parsing failures
+    - ``TokenizerError`` — tokenisation failures
+    - ``ParserError`` — parsing failures
     - ``TranslationError`` — PySpark translation failures
     - ``SQLTranslationError`` — SQL translation failures
     """

@@ -16,7 +16,14 @@ def _build_simple_expression(cfg: dict) -> str:
 
     Simple mode stores: Field, Operator, Operands -> Operand
     Example: [Age] > 18
+
+    Some XML variants nest these under a ``<Simple>`` element.
     """
+    # If fields are nested under a <Simple> element, unwrap first
+    simple = cfg.get("Simple", {})
+    if isinstance(simple, dict) and simple:
+        cfg = simple
+
     field_name = safe_get_nested(cfg, "Field")
     operator = safe_get_nested(cfg, "Operator")
     operands = cfg.get("Operands", {})

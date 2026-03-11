@@ -189,6 +189,34 @@ class TestEOF:
         assert tokens[-1].token_type == TokenType.EOF
 
 
+class TestCommentStripping:
+    """Test that // comments are stripped before tokenization."""
+
+    def test_trailing_comment(self, tokenizer: AlteryxTokenizer) -> None:
+        tokens = tokenizer.tokenize("[Age] > 25 //check age limit")
+        types = [t.token_type for t in tokens]
+        assert types == [TokenType.FIELD_REF, TokenType.COMPARISON, TokenType.NUMBER, TokenType.EOF]
+
+    def test_comment_does_not_affect_string(self, tokenizer: AlteryxTokenizer) -> None:
+        tokens = tokenizer.tokenize('"hello//world"')
+        assert tokens[0].token_type == TokenType.STRING
+        assert tokens[0].value == "hello//world"
+
+    def test_comment_after_expression(self, tokenizer: AlteryxTokenizer) -> None:
+        tokens = tokenizer.tokenize("[Cust#] = '8721' //and [Note#] = '123'")
+        # Should only tokenize the part before //
+        field_refs = [t for t in tokens if t.token_type == TokenType.FIELD_REF]
+        assert len(field_refs) == 1
+        assert field_refs[0].value == "Cust#"
+
+    def test_no_comment(self, tokenizer: AlteryxTokenizer) -> None:
+        tokens = tokenizer.tokenize("[A] / [B]")
+        # Single / is division, not a comment
+        ops = [t for t in tokens if t.token_type == TokenType.OPERATOR]
+        assert len(ops) == 1
+        assert ops[0].value == "/"
+
+
 class TestFullExpressions:
     """Test tokenization of complete expressions."""
 

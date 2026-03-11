@@ -298,6 +298,18 @@ _register(
 # ---------------------------------------------------------------------------
 _register("CharFromInt", "F.chr({0})", "CHR({0})", 1, 1, notes="Alias for IntToChar")
 
+# ---------------------------------------------------------------------------
+# File functions
+# ---------------------------------------------------------------------------
+_register(
+    "FileGetFileName",
+    "F.element_at(F.split(F.regexp_replace({0}, '\\\\\\\\', '/'), '/'), -1)",
+    "ELEMENT_AT(SPLIT(REGEXP_REPLACE({0}, '\\\\\\\\', '/'), '/'), -1)",
+    1,
+    1,
+    notes="Extracts filename from a path; normalizes backslash to forward-slash first",
+)
+
 
 def get_function_mapping(name: str) -> FunctionMapping | None:
     """Look up a function mapping by (case-insensitive) Alteryx name.

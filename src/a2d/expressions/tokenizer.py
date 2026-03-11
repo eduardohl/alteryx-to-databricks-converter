@@ -12,6 +12,8 @@ import re
 from dataclasses import dataclass
 from enum import Enum, auto
 
+from a2d.expressions.errors import BaseTranslationError
+
 
 class TokenType(Enum):
     """Token types for Alteryx expressions."""
@@ -50,7 +52,7 @@ LOGICAL_WORDS = {"AND", "OR", "NOT"}
 _ROW_REF_PATTERN = re.compile(r"\[Row([+-]\d+):([^\]]+)\]", re.IGNORECASE)
 
 
-class TokenizerError(Exception):
+class TokenizerError(BaseTranslationError):
     """Error raised when the tokenizer encounters invalid input."""
 
     def __init__(self, message: str, position: int):
@@ -60,6 +62,47 @@ class TokenizerError(Exception):
 
 class AlteryxTokenizer:
     """Tokenize Alteryx expression strings."""
+
+    @staticmethod
+    def _strip_comments(expression: str) -> str:
+        """Remove ``//``-to-EOL comments that are outside string literals."""
+        result: list[str] = []
+        i = 0
+        length = len(expression)
+        while i < length:
+            ch = expression[i]
+            # Skip over string literals
+            if ch in ('"', "'"):
+                quote = ch
+                result.append(ch)
+                i += 1
+                while i < length:
+                    c = expression[i]
+                    if c == "\\" and i + 1 < length:
+                        result.append(c)
+                        result.append(expression[i + 1])
+                        i += 2
+                        continue
+                    result.append(c)
+                    if c == quote:
+                        # Check for doubled quotes
+                        if i + 1 < length and expression[i + 1] == quote:
+                            result.append(expression[i + 1])
+                            i += 2
+                            continue
+                        i += 1
+                        break
+                    i += 1
+                continue
+            # Detect // comment
+            if ch == "/" and i + 1 < length and expression[i + 1] == "/":
+                # Skip to end of line
+                while i < length and expression[i] != "\n":
+                    i += 1
+                continue
+            result.append(ch)
+            i += 1
+        return "".join(result)
 
     def tokenize(self, expression: str) -> list[Token]:
         """Tokenize an Alteryx expression into a list of tokens.
@@ -73,6 +116,7 @@ class AlteryxTokenizer:
         Raises:
             TokenizerError: If the expression contains invalid syntax.
         """
+        expression = self._strip_comments(expression)
         tokens: list[Token] = []
         pos = 0
         length = len(expression)

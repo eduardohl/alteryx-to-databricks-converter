@@ -35,10 +35,12 @@ from a2d.ir.nodes import (
     DataCleansingNode,
     DateTimeNode,
     DecisionTreeNode,
+    DirectoryNode,
     DistanceNode,
     DownloadNode,
     DynamicInputNode,
     DynamicOutputNode,
+    DynamicRenameNode,
     EmailOutputNode,
     ETSNode,
     FieldAction,
@@ -1973,6 +1975,59 @@ class PySparkGenerator(CodeGenerator):
         )
 
     # -- Special nodes ------------------------------------------------------
+
+    def _generate_DynamicRenameNode(self, node: DynamicRenameNode, input_vars: dict[str, str]) -> NodeCodeResult:
+        inp = self._get_single_input(input_vars)
+        out_var = f"df_{node.node_id}"
+
+        if node.rename_mode == "FirstRow":
+            lines = [
+                f"# DynamicRename (FirstRow): use first row values as new column names",
+                f"_first_row_{node.node_id} = {inp}.first()",
+                f"{out_var} = {inp}.toDF(*[str(v) for v in _first_row_{node.node_id}])",
+                f"{out_var} = {out_var}.subtract({inp}.limit(1))  # remove the header row",
+            ]
+        else:
+            lines = [
+                f"# TODO: DynamicRename mode '{node.rename_mode}' — manual conversion required",
+                f"{out_var} = {inp}  # passthrough placeholder",
+            ]
+
+        return NodeCodeResult(
+            code_lines=lines,
+            output_vars={"Output": out_var},
+            warnings=(
+                [f"DynamicRename mode '{node.rename_mode}' requires manual review (node {node.node_id})"]
+                if node.rename_mode != "FirstRow"
+                else []
+            ),
+        )
+
+    def _generate_DirectoryNode(self, node: DirectoryNode, input_vars: dict[str, str]) -> NodeCodeResult:
+        out_var = f"df_{node.node_id}"
+        path = node.directory_path or "/mnt/data"
+        pattern = node.file_pattern or "*"
+        recursive = str(node.include_subdirs).lower()
+
+        lines = [
+            f"# Directory listing: {path} (pattern={pattern}, recursive={recursive})",
+            f"_files_{node.node_id} = dbutils.fs.ls('{path}')",
+        ]
+        if pattern != "*":
+            lines.append(
+                f"_files_{node.node_id} = [f for f in _files_{node.node_id} if f.name.endswith('{pattern.lstrip('*')}')]"
+            )
+        lines.extend([
+            f"{out_var} = spark.createDataFrame(",
+            f"    [(f.path, f.name, f.size) for f in _files_{node.node_id}],",
+            '    ["FullPath", "FileName", "FileSize"]',
+            ")",
+        ])
+        return NodeCodeResult(
+            code_lines=lines,
+            output_vars={"Output": out_var},
+            warnings=[],
+        )
 
     def _generate_UnsupportedNode(self, node: UnsupportedNode, input_vars: dict[str, str]) -> NodeCodeResult:
         inp = self._get_single_input(input_vars)

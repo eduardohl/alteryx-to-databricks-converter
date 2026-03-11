@@ -6,6 +6,7 @@ from a2d.converters import ConverterRegistry
 from a2d.ir.nodes import (
     AutoFieldNode,
     DataCleansingNode,
+    DynamicRenameNode,
     FieldAction,
     FilterNode,
     FormulaNode,
@@ -61,6 +62,24 @@ class TestFilterConverter:
         result = ConverterRegistry.convert_node(node, DEFAULT_CONFIG)
         assert isinstance(result, FilterNode)
         assert result.mode == "simple"
+
+    def test_filter_simple_nested_simple_element(self):
+        """Older XML nests Field/Operator/Operands under <Simple>."""
+        node = make_node(
+            tool_type="Filter",
+            configuration={
+                "Mode": "Simple",
+                "Simple": {
+                    "Field": "Revenue",
+                    "Operator": ">",
+                    "Operands": {"Operand": "1000"},
+                },
+            },
+        )
+        result = ConverterRegistry.convert_node(node, DEFAULT_CONFIG)
+        assert isinstance(result, FilterNode)
+        assert result.mode == "simple"
+        assert result.expression == "[Revenue] > 1000"
 
     def test_filter_empty_configuration_produces_empty_expression(self):
         """A Filter with no Expression and no Simple-mode fields produces empty expression."""
@@ -299,3 +318,29 @@ class TestGenerateRowsConverter:
         assert "<=" in result.condition_expression  # HTML decoded
         assert result.loop_expression == "[Row] + 1"
         assert result.output_field == "Row"
+
+
+class TestDynamicRenameConverter:
+    def test_dynamic_rename_first_row(self):
+        node = make_node(
+            tool_type="DynamicRename",
+            configuration={"RenameMode": "FirstRow"},
+        )
+        result = ConverterRegistry.convert_node(node, DEFAULT_CONFIG)
+        assert isinstance(result, DynamicRenameNode)
+        assert result.rename_mode == "FirstRow"
+
+    def test_dynamic_rename_default(self):
+        node = make_node(tool_type="DynamicRename", configuration={})
+        result = ConverterRegistry.convert_node(node, DEFAULT_CONFIG)
+        assert isinstance(result, DynamicRenameNode)
+        assert result.rename_mode == "FirstRow"  # default
+
+    def test_dynamic_rename_formula_mode(self):
+        node = make_node(
+            tool_type="DynamicRename",
+            configuration={"RenameMode": "Formula"},
+        )
+        result = ConverterRegistry.convert_node(node, DEFAULT_CONFIG)
+        assert isinstance(result, DynamicRenameNode)
+        assert result.rename_mode == "Formula"

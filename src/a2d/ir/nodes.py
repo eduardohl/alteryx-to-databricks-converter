@@ -99,6 +99,15 @@ class BrowseNode(IRNode):
     pass
 
 
+@dataclass
+class DirectoryNode(IRNode):
+    """List files in a directory — maps to dbutils.fs.ls()."""
+
+    directory_path: str = ""
+    file_pattern: str = "*"
+    include_subdirs: bool = False
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Preparation nodes
 # ═══════════════════════════════════════════════════════════════════════════
@@ -237,6 +246,14 @@ class DataCleansingNode(IRNode):
     remove_duplicate_whitespace: bool = False
     replace_nulls_with: str | None = None
     modify_case: str | None = None  # "upper", "lower", "title"
+
+
+@dataclass
+class DynamicRenameNode(IRNode):
+    """Rename columns dynamically (e.g. from first row, formula, or external source)."""
+
+    rename_mode: str = "FirstRow"  # "FirstRow", "Formula", "FileName", etc.
+    fields_to_rename: list[str] = field(default_factory=list)
 
 
 @dataclass
