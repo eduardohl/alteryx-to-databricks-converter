@@ -54,7 +54,7 @@ The tool parses Alteryx `.yxmd` XML files, builds a typed intermediate represent
 ### Prerequisites
 
 - Python 3.10+
-- Node.js 18+ (for frontend build)
+- **Node.js 18+** — **required** for the frontend web UI to build and run (`npm install && npm run build`)
 - Make (optional, for convenience commands)
 
 ### Installation
@@ -73,27 +73,35 @@ cd frontend && npm install && npm run build && cd ..
 
 ### Option 1: CLI Usage
 
+The CLI is invoked via `python -m a2d.cli` (not a bare `a2d` command):
+
 ```bash
 # Convert a single workflow to PySpark (default)
-a2d convert workflow.yxmd -o output/
+python -m a2d.cli convert workflow.yxmd -o output/
 
 # Convert to Delta Live Tables
-a2d convert workflow.yxmd -o output/ -f dlt
+python -m a2d.cli convert workflow.yxmd -o output/ -f dlt
 
 # Convert to SQL
-a2d convert workflow.yxmd -o output/ -f sql
+python -m a2d.cli convert workflow.yxmd -o output/ -f sql
 
 # Convert all workflows in a directory
-a2d convert workflows/ -o output/
+python -m a2d.cli convert workflows/ -o output/
+
+# Include explanatory comments in generated code (off by default)
+python -m a2d.cli convert workflow.yxmd -o output/ --comments
+
+# Show detailed stubs for unsupported nodes
+python -m a2d.cli convert workflow.yxmd -o output/ --verbose-unsupported
 
 # Generate migration readiness report
-a2d analyze workflows/ -o report/
+python -m a2d.cli analyze workflows/ -o report/
 
 # List all supported Alteryx tools
-a2d list-tools
+python -m a2d.cli list-tools
 
 # Validate generated code syntax
-a2d validate output/workflow.py
+python -m a2d.cli validate output/workflow.py
 ```
 
 ### Option 2: Web UI (Local)
@@ -167,7 +175,7 @@ The `app.yaml` configures the runtime command, CORS, and `PYTHONPATH`. The Datab
 
 ## CLI Reference
 
-### `a2d convert`
+### `python -m a2d.cli convert`
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -177,9 +185,11 @@ The `app.yaml` configures the runtime command, CORS, and `PYTHONPATH`. The Datab
 | `--catalog` | `main` | Unity Catalog name |
 | `--schema` | `default` | Schema name |
 | `--no-orchestration` | `False` | Skip Workflow JSON generation |
+| `--comments` | `False` | Include explanatory comments in generated code |
+| `--verbose-unsupported` | `False` | Emit detailed TODO stubs for unsupported nodes |
 | `-v`, `--verbose` | `False` | Enable verbose logging |
 
-### `a2d analyze`
+### `python -m a2d.cli analyze`
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -187,13 +197,13 @@ The `app.yaml` configures the runtime command, CORS, and `PYTHONPATH`. The Datab
 | `-o`, `--output-dir` | `./a2d-report` | Report output directory |
 | `--format` | `html` | Report format: `html`, `json`, `both` |
 
-### `a2d list-tools`
+### `python -m a2d.cli list-tools`
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-s`, `--supported` | `False` | Show only supported tools |
 
-### `a2d validate`
+### `python -m a2d.cli validate`
 
 | Option | Default | Description |
 |--------|---------|-------------|

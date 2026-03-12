@@ -29,6 +29,8 @@ def convert(
     catalog: str = typer.Option("main", help="Unity Catalog name"),
     schema: str = typer.Option("default", help="Schema name"),
     no_orchestration: bool = typer.Option(False, help="Skip workflow JSON generation"),
+    comments: bool = typer.Option(False, "--comments", help="Include explanatory comments in generated code"),
+    verbose_unsupported: bool = typer.Option(False, "--verbose-unsupported", help="Emit detailed TODO stubs for unsupported nodes"),
     batch: bool = typer.Option(False, "--batch", "-b", help="Enable batch mode with structured error tracking"),
     report_format: str = typer.Option("json", "--report-format", help="Batch report format: json, jsonl, html, all"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
@@ -44,6 +46,8 @@ def convert(
         catalog_name=catalog,
         schema_name=schema,
         generate_orchestration=not no_orchestration,
+        include_comments=comments,
+        verbose_unsupported=verbose_unsupported,
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -47,9 +47,10 @@ class ConversionConfig:
     catalog_name: str = "main"
     schema_name: str = "default"
     generate_orchestration: bool = True
-    include_comments: bool = True
+    include_comments: bool = False
     spark_version: str = "3.5"
     dbr_version: str = "14.3"
+    verbose_unsupported: bool = False
     connection_overrides: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

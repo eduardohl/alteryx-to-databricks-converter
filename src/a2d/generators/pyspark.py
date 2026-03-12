@@ -144,7 +144,7 @@ class PySparkGenerator(CodeGenerator):
                 continue
 
             input_vars = self._resolve_input_vars(node.node_id, dag, var_map)
-            result = self._generate_node_code(node, input_vars)
+            result = self._generate_node_code(node, input_vars, dag=dag)
 
             if result.imports:
                 all_imports.update(result.imports)
@@ -159,7 +159,9 @@ class PySparkGenerator(CodeGenerator):
             # Build cell content
             annotation = ""
             if self.config.include_comments and node.annotation:
-                annotation = f"# {node.annotation}\n"
+                # Prefix every line with # to avoid SyntaxError on multi-line annotations
+                annotation_lines = node.annotation.splitlines()
+                annotation = "\n".join(f"# {line}" for line in annotation_lines) + "\n"
             comment = ""
             if self.config.include_comments:
                 comment = f"# Step {node.node_id}: {node.original_tool_type or type(node).__name__}\n"
@@ -222,29 +224,21 @@ class PySparkGenerator(CodeGenerator):
 
     # -- Node dispatch ------------------------------------------------------
 
-    def _generate_node_code(self, node: IRNode, input_vars: dict[str, str]) -> NodeCodeResult:
+    def _generate_node_code(self, node: IRNode, input_vars: dict[str, str], dag: WorkflowDAG | None = None) -> NodeCodeResult:
         """Generate PySpark code for a single IR node."""
         type_name = type(node).__name__
         method_name = f"_generate_{type_name}"
         method = getattr(self, method_name, None)
         if method is not None:
+            # Pass dag to methods that support dead-branch pruning
+            if type_name in ("FilterNode", "JoinNode") and dag is not None:
+                return method(node, input_vars, dag=dag)
             return method(node, input_vars)
         # Fallback for unknown node types
         return self._generate_fallback(node, input_vars)
 
     def _generate_fallback(self, node: IRNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        lines = [
-            f"# TODO: Unsupported node type '{type(node).__name__}' (tool: {node.original_tool_type})",
-            "# Manual conversion required.",
-            f"{out_var} = {inp}  # passthrough placeholder",
-        ]
-        return NodeCodeResult(
-            code_lines=lines,
-            output_vars={"Output": out_var},
-            warnings=[f"No generator for node type {type(node).__name__} (node {node.node_id})"],
-        )
+        return self._unsupported_passthrough(node, input_vars)
 
     # -- IO nodes -----------------------------------------------------------
 
@@ -339,11 +333,16 @@ class PySparkGenerator(CodeGenerator):
 
     # -- Preparation nodes --------------------------------------------------
 
-    def _generate_FilterNode(self, node: FilterNode, input_vars: dict[str, str]) -> NodeCodeResult:
+    def _generate_FilterNode(self, node: FilterNode, input_vars: dict[str, str], dag: WorkflowDAG | None = None) -> NodeCodeResult:
         inp = self._get_single_input(input_vars)
         out_true = f"df_{node.node_id}_true"
         out_false = f"df_{node.node_id}_false"
         warnings: list[str] = []
+
+        # Determine which branches are actually wired downstream
+        used_anchors = dag.get_outgoing_anchors(node.node_id) if dag is not None else {"True", "False"}
+        need_true = "True" in used_anchors or "Output" in used_anchors
+        need_false = "False" in used_anchors
 
         if not node.expression or not node.expression.strip():
             warnings.append(
@@ -353,8 +352,9 @@ class PySparkGenerator(CodeGenerator):
             lines = [
                 f"# TODO: Filter node {node.node_id} — expression could not be extracted from workflow XML",
                 f"{out_true} = {inp}",
-                f"{out_false} = {inp}.limit(0)  # empty — no filter expression available",
             ]
+            if need_false:
+                lines.append(f"{out_false} = {inp}.limit(0)  # empty — no filter expression available")
         else:
             try:
                 expr = self._translator.translate_string(node.expression)
@@ -363,19 +363,28 @@ class PySparkGenerator(CodeGenerator):
                 expr = f'F.expr("{node.expression}")'
                 warnings.append(f"Filter expression fallback for node {node.node_id}: {exc}")
 
-            lines = [
-                f"_filter_cond_{node.node_id} = {expr}",
-                f"{out_true} = {inp}.filter(_filter_cond_{node.node_id})",
-                f"{out_false} = {inp}.filter(~(_filter_cond_{node.node_id}))",
-            ]
+            if need_true and need_false:
+                # Both branches needed — use a shared condition variable
+                lines = [
+                    f"_filter_cond_{node.node_id} = {expr}",
+                    f"{out_true} = {inp}.filter(_filter_cond_{node.node_id})",
+                    f"{out_false} = {inp}.filter(~(_filter_cond_{node.node_id}))",
+                ]
+            elif need_true:
+                lines = [f"{out_true} = {inp}.filter({expr})"]
+            else:
+                # Only false branch needed (rare)
+                lines = [f"{out_false} = {inp}.filter(~({expr}))"]
+
+        output_vars: dict[str, str] = {"Output": out_true}
+        if need_true:
+            output_vars["True"] = out_true
+        if need_false:
+            output_vars["False"] = out_false
 
         return NodeCodeResult(
             code_lines=lines,
-            output_vars={
-                "True": out_true,
-                "False": out_false,
-                "Output": out_true,
-            },
+            output_vars=output_vars,
             warnings=warnings,
         )
 
@@ -387,7 +396,8 @@ class PySparkGenerator(CodeGenerator):
 
         for formula in node.formulas:
             try:
-                expr = self._translator.translate_string(formula.expression)
+                fixed_expression = self._fix_implicit_field_refs(formula.expression, formula.output_field)
+                expr = self._translator.translate_string(fixed_expression)
                 warnings.extend(self._translator.warnings)
             except BaseTranslationError as exc:
                 expr = f'F.expr("{formula.expression}")'
@@ -399,6 +409,49 @@ class PySparkGenerator(CodeGenerator):
             output_vars={"Output": out_var},
             warnings=warnings,
         )
+
+    @staticmethod
+    def _fix_implicit_field_refs(expression: str, output_field: str) -> str:
+        """Fix Alteryx expressions with implicit field references.
+
+        Some Alteryx formulas use bare literal conditions in IF/ELSEIF blocks
+        (e.g. ``IF "101" THEN "HELOC"``), where the field being tested is
+        implicitly the output field.  This rewrites them to explicit comparisons
+        (e.g. ``IF [PRODUCT_TYPE] = "101" THEN "HELOC"``).
+        """
+        from a2d.expressions.ast import IfExpr, Literal
+        from a2d.expressions.parser import ExpressionParser
+
+        if not expression or not expression.strip():
+            return expression
+
+        try:
+            parser = ExpressionParser()
+            ast = parser.parse(expression)
+        except Exception:
+            return expression  # leave unparseable expressions alone
+
+        if not isinstance(ast, IfExpr):
+            return expression
+
+        # Check if the IF or any ELSEIF condition is a bare literal
+        needs_fix = isinstance(ast.condition, Literal)
+        if not needs_fix:
+            needs_fix = any(isinstance(cond, Literal) for cond, _ in ast.elseif_clauses)
+
+        if not needs_fix:
+            return expression
+
+        # Rewrite bare literal conditions to [output_field] = literal
+        escaped_field = output_field.replace('"', '\\"')
+        result = expression
+        # Use regex to find IF/ELSEIF followed by a bare string literal (not a comparison)
+        result = re.sub(
+            r'((?:ELSE)?IF)\s+"([^"]*)"(\s+THEN)',
+            rf'\1 [{escaped_field}] = "\2"\3',
+            result,
+        )
+        return result
 
     def _generate_SelectNode(self, node: SelectNode, input_vars: dict[str, str]) -> NodeCodeResult:
         inp = self._get_single_input(input_vars)
@@ -561,33 +614,46 @@ class PySparkGenerator(CodeGenerator):
     def _generate_DataCleansingNode(self, node: DataCleansingNode, input_vars: dict[str, str]) -> NodeCodeResult:
         inp = self._get_single_input(input_vars)
         out_var = f"df_{node.node_id}"
-        lines = [f"{out_var} = {inp}"]
+
+        # Build a composed expression per field, then emit a single withColumns()
+        field_exprs: dict[str, str] = {}
+        null_fill: dict[str, str] = {}
 
         for fld in node.fields:
+            expr = f'F.col("{fld}")'
             if node.trim_whitespace:
-                lines.append(f'{out_var} = {out_var}.withColumn("{fld}", F.trim(F.col("{fld}")))')
-            if node.remove_null and node.replace_nulls_with is not None:
-                lines.append(f'{out_var} = {out_var}.na.fill({{"{fld}": "{node.replace_nulls_with}"}})')
-            elif node.remove_null:
-                lines.append(f'{out_var} = {out_var}.na.fill({{"{fld}": ""}})')
+                expr = f"F.trim({expr})"
             if node.modify_case == "upper":
-                lines.append(f'{out_var} = {out_var}.withColumn("{fld}", F.upper(F.col("{fld}")))')
+                expr = f"F.upper({expr})"
             elif node.modify_case == "lower":
-                lines.append(f'{out_var} = {out_var}.withColumn("{fld}", F.lower(F.col("{fld}")))')
+                expr = f"F.lower({expr})"
             elif node.modify_case == "title":
-                lines.append(f'{out_var} = {out_var}.withColumn("{fld}", F.initcap(F.col("{fld}")))')
+                expr = f"F.initcap({expr})"
             if node.remove_tabs:
-                lines.append(
-                    f'{out_var} = {out_var}.withColumn("{fld}", F.regexp_replace(F.col("{fld}"), "\\\\t", ""))'
-                )
+                expr = f'F.regexp_replace({expr}, "\\\\t", "")'
             if node.remove_line_breaks:
-                lines.append(
-                    f'{out_var} = {out_var}.withColumn("{fld}", F.regexp_replace(F.col("{fld}"), "[\\\\r\\\\n]+", ""))'
-                )
+                expr = f'F.regexp_replace({expr}, "[\\\\r\\\\n]+", "")'
             if node.remove_duplicate_whitespace:
-                lines.append(
-                    f'{out_var} = {out_var}.withColumn("{fld}", F.regexp_replace(F.col("{fld}"), "\\\\s+", " "))'
-                )
+                expr = f'F.regexp_replace({expr}, "\\\\s+", " ")'
+
+            # Only add to withColumns if there are actual transformations
+            if expr != f'F.col("{fld}")':
+                field_exprs[fld] = expr
+
+            if node.remove_null:
+                null_fill[fld] = f'"{node.replace_nulls_with}"' if node.replace_nulls_with is not None else '""'
+
+        lines: list[str] = []
+
+        if field_exprs:
+            entries = ", ".join(f'"{fld}": {expr}' for fld, expr in field_exprs.items())
+            lines.append(f"{out_var} = {inp}.withColumns({{{entries}}})")
+        else:
+            lines.append(f"{out_var} = {inp}")
+
+        if null_fill:
+            fill_dict = ", ".join(f'"{fld}": {val}' for fld, val in null_fill.items())
+            lines.append(f"{out_var} = {out_var}.na.fill({{{fill_dict}}})")
 
         return NodeCodeResult(
             code_lines=lines,
@@ -656,7 +722,7 @@ class PySparkGenerator(CodeGenerator):
 
     # -- Join nodes ---------------------------------------------------------
 
-    def _generate_JoinNode(self, node: JoinNode, input_vars: dict[str, str]) -> NodeCodeResult:
+    def _generate_JoinNode(self, node: JoinNode, input_vars: dict[str, str], dag: WorkflowDAG | None = None) -> NodeCodeResult:
         left_var = input_vars.get("Left", input_vars.get("Input", "MISSING_LEFT"))
         right_var = input_vars.get("Right", "MISSING_RIGHT")
         out_join = f"df_{node.node_id}_join"
@@ -673,22 +739,32 @@ class PySparkGenerator(CodeGenerator):
         else:
             condition = "F.lit(True)"
 
-        lines = [
-            f'{out_join} = {left_var}.join({right_var}, {condition}, "{join_type}")',
-            "# Left unmatched (anti join)",
-            f'{out_left} = {left_var}.join({right_var}, {condition}, "left_anti")',
-            "# Right unmatched (anti join)",
-            f'{out_right} = {right_var}.join({left_var}, {condition}, "left_anti")',
-        ]
+        # Determine which outputs are actually wired downstream
+        used_anchors = dag.get_outgoing_anchors(node.node_id) if dag is not None else {"Join", "Left", "Right"}
+        need_join = "Join" in used_anchors or "Output" in used_anchors
+        need_left = "Left" in used_anchors
+        need_right = "Right" in used_anchors
+
+        lines: list[str] = []
+        output_vars: dict[str, str] = {}
+
+        if need_join or (not need_left and not need_right):
+            lines.append(f'{out_join} = {left_var}.join({right_var}, {condition}, "{join_type}")')
+            output_vars["Join"] = out_join
+            output_vars["Output"] = out_join
+        if need_left:
+            lines.append(f'{out_left} = {left_var}.join({right_var}, {condition}, "left_anti")')
+            output_vars["Left"] = out_left
+        if need_right:
+            lines.append(f'{out_right} = {right_var}.join({left_var}, {condition}, "left_anti")')
+            output_vars["Right"] = out_right
+
+        if "Output" not in output_vars:
+            output_vars["Output"] = out_join
 
         return NodeCodeResult(
             code_lines=lines,
-            output_vars={
-                "Join": out_join,
-                "Left": out_left,
-                "Right": out_right,
-                "Output": out_join,
-            },
+            output_vars=output_vars,
         )
 
     def _generate_UnionNode(self, node: UnionNode, input_vars: dict[str, str]) -> NodeCodeResult:
@@ -2029,21 +2105,38 @@ class PySparkGenerator(CodeGenerator):
             warnings=[],
         )
 
-    def _generate_UnsupportedNode(self, node: UnsupportedNode, input_vars: dict[str, str]) -> NodeCodeResult:
+    def _unsupported_passthrough(self, node: IRNode, input_vars: dict[str, str], label: str | None = None) -> NodeCodeResult:
+        """Emit a concise passthrough for unsupported node types.
+
+        When ``config.verbose_unsupported`` is True, additional TODO lines are
+        emitted for debugging.  Otherwise a single comment + assignment is used.
+        """
         inp = self._get_single_input(input_vars)
         out_var = f"df_{node.node_id}"
-        reason = node.unsupported_reason or "No auto-conversion available"
-        lines = [
-            f"# UNSUPPORTED: {node.original_tool_type or node.original_plugin_name}",
-            f"# Reason: {reason}",
-            "# TODO: Manual conversion required.",
-            f"{out_var} = {inp}  # passthrough placeholder",
-        ]
+        tool = label or node.original_tool_type or node.original_plugin_name or type(node).__name__
+        reason = getattr(node, "unsupported_reason", None) or "No auto-conversion available"
+
+        if self.config.verbose_unsupported:
+            lines = [
+                f"# UNSUPPORTED: {tool}",
+                f"# Reason: {reason}",
+                "# TODO: Manual conversion required.",
+                f"{out_var} = {inp}  # passthrough placeholder",
+            ]
+        else:
+            lines = [
+                f"# {tool}: manual conversion required",
+                f"{out_var} = {inp}",
+            ]
+
         return NodeCodeResult(
             code_lines=lines,
             output_vars={"Output": out_var},
-            warnings=[f"Unsupported node {node.node_id} ({node.original_tool_type}): {reason}"],
+            warnings=[f"Unsupported node {node.node_id} ({tool}): {reason}"],
         )
+
+    def _generate_UnsupportedNode(self, node: UnsupportedNode, input_vars: dict[str, str]) -> NodeCodeResult:
+        return self._unsupported_passthrough(node, input_vars)
 
     def _generate_CommentNode(self, node: CommentNode, input_vars: dict[str, str]) -> NodeCodeResult:
         # Handled specially in generate() but provide fallback

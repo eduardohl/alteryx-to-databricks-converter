@@ -88,18 +88,51 @@ class TestReadNode:
 
 
 class TestFilterNode:
-    def test_filter_node_generates_two_branches(self, generator: PySparkGenerator):
-        """Filter should produce both true and false DataFrames."""
+    def test_filter_node_generates_only_used_branches(self, generator: PySparkGenerator):
+        """Filter should only emit branches that are connected downstream."""
         read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
         filt = FilterNode(
             node_id=2,
             original_tool_type="Filter",
             expression="[Age] > 25",
         )
+        # Downstream node wired to False output only
+        from a2d.ir.nodes import BrowseNode
+        browse = BrowseNode(node_id=3, original_tool_type="Browse")
         dag = WorkflowDAG()
         dag.add_node(read)
         dag.add_node(filt)
+        dag.add_node(browse)
         dag.add_edge(1, 2)
+        dag.add_edge(2, 3, origin_anchor="False", destination_anchor="Input")
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+
+        # Only the false branch should be emitted
+        assert "df_2_false" in content
+        assert "df_2_true" not in content
+        assert ".filter(" in content
+
+    def test_filter_node_both_branches(self, generator: PySparkGenerator):
+        """Filter with both branches wired should emit both."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
+        filt = FilterNode(
+            node_id=2,
+            original_tool_type="Filter",
+            expression="[Age] > 25",
+        )
+        from a2d.ir.nodes import BrowseNode
+        browse_true = BrowseNode(node_id=3, original_tool_type="Browse")
+        browse_false = BrowseNode(node_id=4, original_tool_type="Browse")
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(filt)
+        dag.add_node(browse_true)
+        dag.add_node(browse_false)
+        dag.add_edge(1, 2)
+        dag.add_edge(2, 3, origin_anchor="True", destination_anchor="Input")
+        dag.add_edge(2, 4, origin_anchor="False", destination_anchor="Input")
 
         output = generator.generate(dag)
         content = output.files[0].content
@@ -107,7 +140,6 @@ class TestFilterNode:
         assert "df_2_true" in content
         assert "df_2_false" in content
         assert ".filter(" in content
-
 
     def test_filter_node_empty_expression_does_not_crash(self, generator: PySparkGenerator):
         """A FilterNode with an empty expression should generate a passthrough, not crash."""
@@ -125,9 +157,8 @@ class TestFilterNode:
         output = generator.generate(dag)
         content = output.files[0].content
 
-        # Should produce a passthrough (True = input, False = empty) with a TODO comment
+        # Should produce a passthrough with a TODO comment
         assert "df_2_true" in content
-        assert "df_2_false" in content
         assert "TODO" in content
         # Should NOT crash or contain .filter() call
         assert ".filter(_filter_cond" not in content
@@ -308,8 +339,8 @@ class TestSortNode:
 
 
 class TestUnsupportedNode:
-    def test_unsupported_node_as_comment(self, generator: PySparkGenerator):
-        """UnsupportedNode generates a comment block with guidance."""
+    def test_unsupported_node_concise(self, generator: PySparkGenerator):
+        """UnsupportedNode generates a concise comment by default."""
         read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
         unsup = UnsupportedNode(
             node_id=2,
@@ -325,11 +356,33 @@ class TestUnsupportedNode:
         output = generator.generate(dag)
         content = output.files[0].content
 
+        assert "SpatialMatch" in content
+        assert "manual conversion required" in content
+        assert len(output.warnings) >= 1
+
+    def test_unsupported_node_verbose(self):
+        """UnsupportedNode emits detailed stubs when verbose_unsupported=True."""
+        from a2d.config import ConversionConfig
+        verbose_gen = PySparkGenerator(ConversionConfig(verbose_unsupported=True))
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
+        unsup = UnsupportedNode(
+            node_id=2,
+            original_tool_type="SpatialMatch",
+            unsupported_reason="Geospatial tools are not supported",
+        )
+
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(unsup)
+        dag.add_edge(1, 2)
+
+        output = verbose_gen.generate(dag)
+        content = output.files[0].content
+
         assert "UNSUPPORTED" in content
         assert "SpatialMatch" in content
         assert "Geospatial tools are not supported" in content
         assert "passthrough placeholder" in content
-        assert len(output.warnings) >= 1
 
 
 class TestNotebookFormat:
