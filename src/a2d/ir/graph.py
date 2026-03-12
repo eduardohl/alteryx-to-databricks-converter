@@ -96,6 +96,18 @@ class WorkflowDAG:
             raise KeyError(f"No edge from {source_id} to {target_id}")
         return self._graph.edges[source_id, target_id]["info"]
 
+    def get_outgoing_anchors(self, node_id: int) -> set[str]:
+        """Return the set of origin anchors actually connected downstream.
+
+        Useful for determining which output branches of a multi-output node
+        (Filter True/False, Join Join/Left/Right) are consumed by successors.
+        """
+        anchors: set[str] = set()
+        for _src, _tgt, data in self._graph.out_edges(node_id, data=True):
+            info: EdgeInfo = data["info"]
+            anchors.add(info.origin_anchor)
+        return anchors
+
     # ── Traversal ───────────────────────────────────────────────────────
 
     def topological_order(self) -> list[IRNode]:

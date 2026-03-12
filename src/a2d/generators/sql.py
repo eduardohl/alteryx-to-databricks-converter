@@ -131,10 +131,22 @@ class SQLGenerator(CodeGenerator):
         last_cte: str = "empty"
         node_count = 0
 
+        # Node types that are pure passthroughs — skip CTE, forward predecessor name
+        _PASSTHROUGH_TYPES = (AutoFieldNode, BrowseNode, WorkflowControlNode)
+
         for node in ordered_nodes:
             if isinstance(node, CommentNode):
                 cte_blocks.append(f"-- {node.comment_text or ''}")
                 continue
+
+            # Skip no-op passthrough nodes: forward the predecessor's CTE name
+            if isinstance(node, _PASSTHROUGH_TYPES):
+                input_ctes = self._resolve_input_ctes(node.node_id, dag, cte_map)
+                prev_cte = self._get_single_input(input_ctes) if input_ctes else None
+                if prev_cte:
+                    cte_map[node.node_id] = prev_cte
+                    node_count += 1
+                    continue
 
             name = _cte_name(node)
             cte_map[node.node_id] = name
