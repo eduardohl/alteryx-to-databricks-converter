@@ -12,6 +12,7 @@ import re
 from a2d.__about__ import __version__
 from a2d.config import ConversionConfig
 from a2d.expressions.base_translator import BaseTranslationError
+from a2d.expressions.parser import ParserError
 from a2d.expressions.translator import PySparkTranslator
 from a2d.generators.base import CodeGenerator, GeneratedFile, GeneratedOutput
 from a2d.ir.graph import WorkflowDAG
@@ -253,7 +254,7 @@ class DLTGenerator(CodeGenerator):
             inp = self._get_single_input_read(input_tables)
             try:
                 expr = self._translator.translate_string(node.expression)
-            except BaseTranslationError:
+            except (BaseTranslationError, ParserError):
                 expr = f'F.expr("{node.expression}")'
                 warnings.append(f"Filter expression fallback for node {node.node_id}")
             return [f"return {inp}.filter({expr})"], warnings
@@ -264,7 +265,7 @@ class DLTGenerator(CodeGenerator):
             for formula in node.formulas:
                 try:
                     expr = self._translator.translate_string(formula.expression)
-                except BaseTranslationError:
+                except (BaseTranslationError, ParserError):
                     expr = f'F.expr("{formula.expression}")'
                     warnings.append(f"Formula fallback: {formula.output_field}")
                 lines.append(f'df = df.withColumn("{formula.output_field}", {expr})')
@@ -408,7 +409,7 @@ class DLTGenerator(CodeGenerator):
             try:
                 expr = self._translator.translate_string(node.expression)
                 expr = expr.replace(".over(window)", ".over(_window)")
-            except BaseTranslationError:
+            except (BaseTranslationError, ParserError):
                 expr = f'F.expr("{node.expression}")'
                 warnings.append(f"MultiRowFormula expression fallback for node {node.node_id}")
             lines.append(f'df = df.withColumn("{node.output_field}", {expr})')
@@ -422,7 +423,7 @@ class DLTGenerator(CodeGenerator):
                 try:
                     expr_str = node.expression.replace("[_CurrentField_]", f"[{fld}]")
                     expr = self._translator.translate_string(expr_str)
-                except BaseTranslationError:
+                except (BaseTranslationError, ParserError):
                     expr = f'F.col("{fld}")'
                     warnings.append(f"MultiFieldFormula fallback for field '{fld}'")
                 output_name = f"{fld}_out" if node.copy_output else fld
