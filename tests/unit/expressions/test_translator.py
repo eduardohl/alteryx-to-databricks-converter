@@ -393,3 +393,34 @@ class TestEmptyExpressionGuard:
 
         with pytest.raises(BaseTranslationError, match="Empty expression"):
             sql_translator.translate_string("  \t  ")
+
+
+# ---------------------------------------------------------------------------
+# Regression tests — position() function
+# ---------------------------------------------------------------------------
+
+
+class TestPositionFunction:
+    """Regression tests for position() — previously unregistered, causing fallback warnings."""
+
+    def test_position_pyspark(self, pyspark_translator: PySparkTranslator) -> None:
+        result = pyspark_translator.translate_string('position([ProductName], "x")')
+        assert "F.locate" in result
+        assert "ProductName" in result
+        assert not pyspark_translator.warnings, "position() should be registered, no warnings expected"
+
+    def test_position_sql(self, sql_translator: SparkSQLTranslator) -> None:
+        result = sql_translator.translate_string('position([ProductName], "x")')
+        assert "LOCATE" in result.upper()
+        assert "ProductName" in result
+
+    def test_position_same_as_findstring(
+        self, pyspark_translator: PySparkTranslator, sql_translator: SparkSQLTranslator
+    ) -> None:
+        pos_py = pyspark_translator.translate_string('position([Name], "a")')
+        find_py = pyspark_translator.translate_string('FindString([Name], "a")')
+        assert pos_py == find_py
+
+        pos_sql = sql_translator.translate_string('position([Name], "a")')
+        find_sql = sql_translator.translate_string('FindString([Name], "a")')
+        assert pos_sql == find_sql

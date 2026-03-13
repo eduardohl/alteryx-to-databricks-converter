@@ -11,6 +11,7 @@ import re
 
 from a2d.config import ConversionConfig
 from a2d.expressions.base_translator import BaseTranslationError
+from a2d.expressions.parser import ParserError
 from a2d.expressions.translator import PySparkTranslator
 from a2d.generators.base import CodeGenerator, GeneratedFile, GeneratedOutput, NodeCodeResult
 from a2d.ir.graph import WorkflowDAG
@@ -399,7 +400,7 @@ class PySparkGenerator(CodeGenerator):
                 fixed_expression = self._fix_implicit_field_refs(formula.expression, formula.output_field)
                 expr = self._translator.translate_string(fixed_expression)
                 warnings.extend(self._translator.warnings)
-            except BaseTranslationError as exc:
+            except (BaseTranslationError, ParserError) as exc:
                 expr = f'F.expr("{formula.expression}")'
                 warnings.append(f"Formula expression fallback for '{formula.output_field}': {exc}")
             lines.append(f'{out_var} = {out_var}.withColumn("{formula.output_field}", {expr})')
@@ -568,7 +569,7 @@ class PySparkGenerator(CodeGenerator):
         try:
             expr = self._translator.translate_string(node.expression)
             warnings.extend(self._translator.warnings)
-        except BaseTranslationError as exc:
+        except (BaseTranslationError, ParserError) as exc:
             expr = f'F.expr("{node.expression}")'
             warnings.append(f"MultiRowFormula expression fallback: {exc}")
 
@@ -598,7 +599,7 @@ class PySparkGenerator(CodeGenerator):
                 expr_str = node.expression.replace("[_CurrentField_]", f"[{fld}]")
                 expr = self._translator.translate_string(expr_str)
                 warnings.extend(self._translator.warnings)
-            except BaseTranslationError as exc:
+            except (BaseTranslationError, ParserError) as exc:
                 expr = f'F.col("{fld}")'
                 warnings.append(f"MultiFieldFormula fallback for field '{fld}': {exc}")
 

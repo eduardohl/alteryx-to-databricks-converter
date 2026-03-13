@@ -54,6 +54,8 @@ _register("Contains", "({0}).contains({1})", "{0} LIKE CONCAT('%', {1}, '%')", 2
 _register("EndsWith", "({0}).endswith({1})", "{0} LIKE CONCAT('%', {1})", 2, 2)
 _register("StartsWith", "({0}).startswith({1})", "{0} LIKE CONCAT({1}, '%')", 2, 2)
 _register("FindString", "(F.locate({1}, {0}) - 1)", "(LOCATE({1}, {0}) - 1)", 2, 2)
+_register("position", "(F.locate({1}, {0}) - 1)", "(LOCATE({1}, {0}) - 1)", 2, 2,
+          notes="Alias for FindString — 0-based position of target in string")
 _register("Left", "F.substring({0}, 1, {1})", "LEFT({0}, {1})", 2, 2)
 _register("Right", "F.expr(f'RIGHT({{{0}}}, {{{1}}})')", "RIGHT({0}, {1})", 2, 2, notes="Uses SQL expr")
 _register("Length", "F.length({0})", "LENGTH({0})", 1, 1)
