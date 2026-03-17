@@ -10,7 +10,7 @@ special ``{args}`` placeholder for variable-length argument lists.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -23,6 +23,8 @@ class FunctionMapping:
     min_args: int = 0
     max_args: int | None = None
     notes: str = ""
+    raw_string_args: frozenset[int] = field(default_factory=frozenset)
+    """Argument positions that must be emitted as plain Python strings (not F.lit())."""
 
 
 FUNCTION_REGISTRY: dict[str, FunctionMapping] = {}
@@ -35,6 +37,7 @@ def _register(
     min_args: int = 0,
     max_args: int | None = None,
     notes: str = "",
+    raw_string_args: frozenset[int] | None = None,
 ) -> None:
     """Register a function mapping in the global registry."""
     FUNCTION_REGISTRY[name.lower()] = FunctionMapping(
@@ -44,6 +47,7 @@ def _register(
         min_args=min_args,
         max_args=max_args,
         notes=notes,
+        raw_string_args=raw_string_args or frozenset(),
     )
 
 
@@ -169,8 +173,8 @@ _register(
     3,
     notes="Args: start, end, unit",
 )
-_register("DateTimeFormat", "F.date_format({0}, {1})", "DATE_FORMAT({0}, {1})", 2, 2)
-_register("DateTimeParse", "F.to_timestamp({0}, {1})", "TO_TIMESTAMP({0}, {1})", 2, 2)
+_register("DateTimeFormat", "F.date_format({0}, {1})", "DATE_FORMAT({0}, {1})", 2, 2, raw_string_args=frozenset({1}))
+_register("DateTimeParse", "F.to_timestamp({0}, {1})", "TO_TIMESTAMP({0}, {1})", 2, 2, raw_string_args=frozenset({1}))
 _register("DateTimeTrim", "F.date_trunc({1}, {0})", "DATE_TRUNC({1}, {0})", 2, 2)
 _register("DateTimeFirstOfMonth", "F.trunc({0}, 'month')", "TRUNC({0}, 'month')", 1, 1)
 _register("DateTimeDayOfWeek", "F.dayofweek({0})", "DAYOFWEEK({0})", 1, 1)

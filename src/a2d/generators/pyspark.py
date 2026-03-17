@@ -220,6 +220,14 @@ class PySparkGenerator(CodeGenerator):
             else:
                 var_name = f"df_{pred.node_id}"
 
+            # Deduplicate: if two connections share the same dest_anchor (e.g. Union
+            # uses "Input" for every incoming edge), suffix with a counter so all
+            # inputs are preserved in the dict.
+            if dest_anchor in result:
+                counter = 2
+                while f"{dest_anchor}_{counter}" in result:
+                    counter += 1
+                dest_anchor = f"{dest_anchor}_{counter}"
             result[dest_anchor] = var_name
         return result
 
@@ -751,6 +759,15 @@ class PySparkGenerator(CodeGenerator):
 
         if need_join or (not need_left and not need_right):
             lines.append(f'{out_join} = {left_var}.join({right_var}, {condition}, "{join_type}")')
+            # Apply post-join column ops (renames first, then drops) for the Join output
+            for op in node.select_left + node.select_right:
+                if op.action.value == "rename" and op.rename_to and op.rename_to != op.field_name:
+                    lines.append(f'{out_join} = {out_join}.withColumnRenamed("{op.field_name}", "{op.rename_to}")')
+            for op in node.select_left + node.select_right:
+                if not op.selected:
+                    # Use the renamed name if it was renamed; otherwise original
+                    drop_name = op.rename_to if (op.rename_to and op.rename_to != op.field_name) else op.field_name
+                    lines.append(f'{out_join} = {out_join}.drop("{drop_name}")')
             output_vars["Join"] = out_join
             output_vars["Output"] = out_join
         if need_left:

@@ -94,7 +94,15 @@ class PySparkTranslator(BaseExpressionTranslator):
             args = ", ".join(self._visit(a) for a in node.arguments)
             return f"F.expr('{node.function_name}({args})')"
 
-        translated_args = [self._visit(a) for a in node.arguments]
+        translated_args = []
+        for i, arg in enumerate(node.arguments):
+            if i in mapping.raw_string_args and isinstance(arg, Literal) and arg.literal_type == "string":
+                # Emit as a plain Python string, not F.lit("..."), so PySpark functions
+                # that require a string argument (e.g. date_format format param) work correctly.
+                escaped = str(arg.value).replace("\\", "\\\\").replace('"', '\\"')
+                translated_args.append(f'"{escaped}"')
+            else:
+                translated_args.append(self._visit(arg))
 
         # Special case: Switch(value, default, val1, result1, val2, result2, ...)
         if mapping.pyspark_template == "__SWITCH__":
