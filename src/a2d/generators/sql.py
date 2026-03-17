@@ -12,6 +12,7 @@ import re
 from a2d.__about__ import __version__
 from a2d.config import ConversionConfig
 from a2d.expressions.base_translator import BaseTranslationError
+from a2d.expressions.parser import ParserError
 from a2d.expressions.sql_translator import SparkSQLTranslator
 from a2d.generators.base import CodeGenerator, GeneratedFile, GeneratedOutput
 from a2d.ir.graph import WorkflowDAG
@@ -252,7 +253,7 @@ class SQLGenerator(CodeGenerator):
                 )
             try:
                 expr = self._translator.translate_string(node.expression)
-            except BaseTranslationError:
+            except (BaseTranslationError, ParserError):
                 expr = node.expression
                 warnings.append(f"SQL filter expression fallback for node {node.node_id}")
             return f"SELECT * FROM {inp} WHERE {expr}", warnings
@@ -263,7 +264,7 @@ class SQLGenerator(CodeGenerator):
             for formula in node.formulas:
                 try:
                     expr = self._translator.translate_string(formula.expression)
-                except BaseTranslationError:
+                except (BaseTranslationError, ParserError):
                     expr = formula.expression
                     warnings.append(f"SQL formula fallback: {formula.output_field}")
                 extras.append(f"{expr} AS `{formula.output_field}`")
@@ -404,7 +405,7 @@ class SQLGenerator(CodeGenerator):
             try:
                 expr = self._translator.translate_string(node.expression)
                 expr = expr.replace("OVER (window)", "OVER (ORDER BY 1)")
-            except BaseTranslationError:
+            except (BaseTranslationError, ParserError):
                 expr = node.expression
                 warnings.append(f"MultiRowFormula SQL fallback for node {node.node_id}")
             if node.group_fields:
@@ -422,7 +423,7 @@ class SQLGenerator(CodeGenerator):
                 try:
                     expr_str = node.expression.replace("[_CurrentField_]", f"[{fld}]")
                     expr = self._translator.translate_string(expr_str)
-                except BaseTranslationError:
+                except (BaseTranslationError, ParserError):
                     expr = f"`{fld}`"
                     warnings.append(f"MultiFieldFormula SQL fallback for field '{fld}'")
                 output_name = f"{fld}_out" if node.copy_output else fld
