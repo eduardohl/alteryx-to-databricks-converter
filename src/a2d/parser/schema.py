@@ -137,7 +137,9 @@ PLUGIN_NAME_MAP: dict[str, tuple[str, str]] = {
     "AlteryxBasePluginsGui.Imputation.Imputation": ("Imputation", "preparation"),
     # ── Join ────────────────────────────────────────────────────────────
     "AlteryxBasePluginsGui.Join.Join": ("Join", "join"),
+    "AlteryxBasePluginsGui.Union.Union": ("Union", "join"),
     "AlteryxBasePluginsGui.UnionV2.UnionV2": ("Union", "join"),
+    "AlteryxBasePluginsGui.DynamicRename.DynamicRename": ("DynamicRename", "preparation"),
     "AlteryxBasePluginsGui.FindReplace.FindReplace": ("FindReplace", "join"),
     "AlteryxBasePluginsGui.AppendFields.AppendFields": ("AppendFields", "join"),
     "AlteryxBasePluginsGui.JoinMultiple.JoinMultiple": ("JoinMultiple", "join"),
@@ -305,6 +307,11 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
         "deterministic",
         "Maps partitioned writes to partitionBy().save()",
         "DataFrame.write.partitionBy",
+    ),
+    "DynamicRename": ToolMetadata(
+        "unsupported",
+        "Renames fields based on a lookup or formula; requires manual conversion",
+        "withColumnRenamed",
     ),
     # ── Preparation ─────────────────────────────────────────────────────
     "Select": ToolMetadata(

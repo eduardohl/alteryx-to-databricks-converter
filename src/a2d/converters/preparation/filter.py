@@ -11,12 +11,27 @@ from a2d.ir.nodes import FilterNode, IRNode
 from a2d.parser.schema import ParsedNode
 
 
+_UNARY_NULL_OPS: dict[str, str] = {
+    "IsNull": "IsNull([{field}])",
+    "IsNotNull": "!IsNull([{field}])",
+    "IsEmpty": "IsEmpty([{field}])",
+    "IsNotEmpty": "!IsEmpty([{field}])",
+}
+
+
 def _build_simple_expression(cfg: dict) -> str:
     """Build a filter expression from Alteryx simple-mode fields.
 
     Simple mode stores: Field, Operator, Operands -> Operand
     Example: [Age] > 18
+
+    Some XML variants nest these under a ``<Simple>`` element.
     """
+    # If fields are nested under a <Simple> element, unwrap first
+    simple = cfg.get("Simple", {})
+    if isinstance(simple, dict) and simple:
+        cfg = simple
+
     field_name = safe_get_nested(cfg, "Field")
     operator = safe_get_nested(cfg, "Operator")
     operands = cfg.get("Operands", {})
@@ -28,6 +43,10 @@ def _build_simple_expression(cfg: dict) -> str:
 
     if not field_name or not operator:
         return ""
+
+    # Unary null/empty operators don't take an operand — build directly
+    if operator in _UNARY_NULL_OPS:
+        return _UNARY_NULL_OPS[operator].format(field=field_name)
 
     expr = f"[{field_name}] {operator}"
     if operand:
