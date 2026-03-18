@@ -54,26 +54,67 @@ The tool parses Alteryx `.yxmd` XML files, builds a typed intermediate represent
 ### Prerequisites
 
 - Python 3.10+
-- **Node.js 18+** — **required** for the frontend web UI to build and run (`npm install && npm run build`)
-- Make (optional, for convenience commands)
+- **Node.js 18+** — only needed for the React web UI (Option 2 below); not required for CLI use
 
 ### Installation
 
+**Download the ZIP from GitHub** (click *Code → Download ZIP*), unzip it, and open a terminal in the project folder.
+
 ```bash
-# Clone the repository
-git clone https://github.com/<org>/alteryx2databricks.git
-cd alteryx2databricks
-
-# Install Python package with all dependencies
-pip install -e ".[all]"
-
-# Build the frontend (optional -- needed for web UI)
-cd frontend && npm install && npm run build && cd ..
+# Install the CLI package (no extras needed for conversion)
+pip install "."
 ```
+
+> **Tip:** Use a virtual environment to keep dependencies isolated — see the Windows and Mac/Linux sections below.
+
+---
+
+### Windows setup (step-by-step)
+
+Open **PowerShell** in the project folder:
+
+```powershell
+# 1. Create a virtual environment
+python -m venv .venv
+
+# 2. Activate it
+.venv\Scripts\Activate.ps1
+```
+
+> If step 2 fails with *"running scripts is disabled"*, run this once and retry:
+> ```powershell
+> Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+> ```
+> Alternatively, use **Command Prompt** (`cmd.exe`) instead:
+> ```cmd
+> .venv\Scripts\activate.bat
+> ```
+
+```powershell
+# 3. Install
+pip install "."
+
+# 4. Convert a workflow
+python -m a2d.cli convert "C:\Users\YourName\Downloads\workflow.yxmd" -o "C:\Users\YourName\Downloads\output"
+```
+
+> **Note on paths (Windows):** Use native Windows paths (`C:\Users\...`) or forward-slash equivalents (`C:/Users/...`). Paths starting with `/C/Users/...` are Git Bash syntax — they only work inside Git Bash, not PowerShell or Command Prompt.
+
+---
+
+### Mac / Linux setup
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install "."
+```
+
+---
 
 ### Option 1: CLI Usage
 
-The CLI is invoked via `python -m a2d.cli` (not a bare `a2d` command):
+The CLI is invoked via `python -m a2d.cli` (works on all platforms including Windows, bypassing any PATH issues):
 
 ```bash
 # Convert a single workflow to PySpark (default)
@@ -104,9 +145,29 @@ python -m a2d.cli list-tools
 python -m a2d.cli validate output/workflow.py
 ```
 
-### Option 2: Web UI (Local)
+> **`a2d` shorthand:** After installation, `a2d convert workflow.yxmd` also works if pip's Scripts directory is on your PATH. On Windows this sometimes requires adding `%APPDATA%\Python\Scripts` to the PATH manually — using `python -m a2d.cli` is more reliable.
+
+### Option 2: Streamlit Web UI (Recommended for non-developers)
+
+A pure-Python web UI with no Node.js required. See [README_STREAMLIT.md](README_STREAMLIT.md) for full setup instructions including Windows-specific steps.
 
 ```bash
+pip install ".[streamlit]"
+python -m streamlit run streamlit_app.py
+```
+
+Open `http://localhost:8501` in your browser.
+
+### Option 3: React Web UI (Local)
+
+Requires Node.js 18+.
+
+```bash
+pip install ".[server]"
+
+# Build the frontend once
+cd frontend && npm install && npm run build && cd ..
+
 # Start the API server with hot-reload (serves React frontend from frontend/dist/)
 PYTHONPATH=src:. uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload
 
@@ -125,7 +186,7 @@ Open http://localhost:8000 in your browser. The web UI provides:
 - **Tool Matrix** -- visual overview of supported Alteryx tools
 - **Validate** -- check generated Python code for syntax errors
 
-### Option 3: Docker
+### Option 4: Docker
 
 ```bash
 # Build the image (multi-stage: frontend build + Python runtime)
@@ -137,7 +198,7 @@ docker run -p 8000:8000 a2d
 
 Open http://localhost:8000.
 
-### Option 4: Databricks Apps
+### Option 5: Databricks Apps
 
 Deploy as a managed Databricks App:
 
@@ -310,12 +371,15 @@ The engine also handles field references (`[FieldName]`), row references (`[Row-
 ### Setup
 
 ```bash
-# Install all dependencies
+# Install all dependencies (includes dev tools: pytest, mypy, ruff, etc.)
 make dev
 
 # Or manually
 pip install -e ".[all]"
 ```
+
+> The `[all]` extra includes server, streamlit, validation, and dev dependencies.
+> For CLI-only use, `pip install "."` is sufficient.
 
 ### Commands
 
