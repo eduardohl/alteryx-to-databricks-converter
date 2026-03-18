@@ -54,16 +54,17 @@ The tool parses Alteryx `.yxmd` XML files, builds a typed intermediate represent
 ### Prerequisites
 
 - Python 3.10+
-- **Node.js 18+** — only needed for the React web UI (Option 2 below); not required for CLI use
+- **Node.js 18+** — only needed for the React web UI (Option 3 below); not required for CLI or Streamlit use
 
 ### Installation
 
 **Download the ZIP from GitHub** (click *Code → Download ZIP*), unzip it, and open a terminal in the project folder.
 
-```bash
-# Install the CLI package (no extras needed for conversion)
-pip install "."
-```
+| What you want to run | Install command |
+|---|---|
+| CLI only (`python -m a2d.cli convert`) | `pip install "."` |
+| Streamlit web UI | `pip install ".[streamlit]"` |
+| React web UI | `pip install ".[server]"` + Node.js 18+ |
 
 > **Tip:** Use a virtual environment to keep dependencies isolated — see the Windows and Mac/Linux sections below.
 
@@ -91,11 +92,15 @@ python -m venv .venv
 > ```
 
 ```powershell
-# 3. Install
-pip install "."
+# 3. Install (choose based on what you want to run)
+pip install "."              # CLI only
+pip install ".[streamlit]"   # Streamlit web UI
 
-# 4. Convert a workflow
+# 4a. Convert a workflow (CLI)
 python -m a2d.cli convert "C:\Users\YourName\Downloads\workflow.yxmd" -o "C:\Users\YourName\Downloads\output"
+
+# 4b. Launch the Streamlit web UI
+python -m streamlit run streamlit_app.py
 ```
 
 > **Note on paths (Windows):** Use native Windows paths (`C:\Users\...`) or forward-slash equivalents (`C:/Users/...`). Paths starting with `/C/Users/...` are Git Bash syntax — they only work inside Git Bash, not PowerShell or Command Prompt.
@@ -107,7 +112,8 @@ python -m a2d.cli convert "C:\Users\YourName\Downloads\workflow.yxmd" -o "C:\Use
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install "."
+pip install "."             # CLI only
+# pip install ".[streamlit]"  # add this instead for the Streamlit web UI
 ```
 
 ---
