@@ -22,6 +22,11 @@ _PLUGIN_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"GoogleAnalytics|GoogleBigQuery|GoogleSheets", re.IGNORECASE), "GoogleConnector", "connectors"),
 ]
 
+# Known Alteryx built-in macros (EngineSettings Macro="...") mapped to tool types.
+_MACRO_TOOL_MAP: dict[str, tuple[str, str]] = {
+    "randomrecords.yxmc": ("Sample", "preparation"),
+}
+
 
 class NodeParser:
     """Parses <Node> XML elements into ParsedNode objects."""
@@ -52,6 +57,18 @@ class NodeParser:
                     break
             if tool_type == "Unknown":
                 logger.warning(f"Unknown plugin: {plugin_name} (ToolID={tool_id})")
+
+        # If still unknown and no plugin name, check EngineSettings Macro attribute.
+        # Some Alteryx built-in tools ship as .yxmc macros without a plugin entry.
+        if tool_type == "Unknown" and not plugin_name:
+            engine_settings = node_element.find("EngineSettings")
+            if engine_settings is not None:
+                macro_path = get_attr(engine_settings, "Macro", "")
+                if macro_path:
+                    macro_file = macro_path.lower().replace("\\", "/").split("/")[-1]
+                    if macro_file in _MACRO_TOOL_MAP:
+                        tool_type, category = _MACRO_TOOL_MAP[macro_file]
+                        plugin_name = f"macro:{macro_file}"
 
         # Extract configuration
         configuration: dict = {}

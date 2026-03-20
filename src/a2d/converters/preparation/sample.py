@@ -20,7 +20,7 @@ class SampleConverter(ToolConverter):
     def convert(self, parsed_node: ParsedNode, config: ConversionConfig) -> IRNode:
         cfg = parsed_node.configuration
 
-        mode = safe_get(cfg, "Mode", default="First")
+        mode = safe_get(cfg, "Mode", default="")
         n_str = safe_get(cfg, "N")
         n_records = int(n_str) if n_str and n_str.isdigit() else None
 
@@ -31,6 +31,39 @@ class SampleConverter(ToolConverter):
                 percentage = float(pct_str)
             except ValueError:
                 pass
+
+        # Handle macro-style config (RandomRecords.yxmc) where settings are stored as
+        # a list of <Value name="..."> elements rather than top-level keys.
+        if not mode and isinstance(cfg.get("Value"), list):
+            values = {
+                v.get("@name", ""): v.get("#text", "")
+                for v in cfg.get("Value", [])
+                if isinstance(v, dict)
+            }
+            is_number = values.get("Number", "True").lower() == "true"
+            is_percent = values.get("Percent", "False").lower() == "true"
+            is_deterministic = values.get("Deterministic", "False").lower() == "true"
+            if is_percent:
+                mode = "Random Percent"
+                try:
+                    percentage = float(values.get("NPercent", "10"))
+                except ValueError:
+                    percentage = 10.0
+            elif is_deterministic:
+                mode = "First"
+                try:
+                    n_records = int(values.get("NNumber", "100"))
+                except ValueError:
+                    n_records = 100
+            else:
+                mode = "Random N"
+                try:
+                    n_records = int(values.get("NNumber", "100"))
+                except ValueError:
+                    n_records = 100
+
+        if not mode:
+            mode = "First"
 
         # Map Alteryx mode strings to IR sample_method
         mode_map = {

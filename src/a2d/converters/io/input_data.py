@@ -28,8 +28,15 @@ _EXT_TO_FORMAT: dict[str, str] = {
 
 
 def _detect_format(file_path: str) -> str:
-    """Detect file format from the file extension."""
-    _, ext = os.path.splitext(file_path.lower())
+    """Detect file format from the file extension.
+
+    Strips any sheet selector suffix (e.g. ``|||`SheetName$```) before
+    inspecting the extension so that Excel paths with sheet references are
+    correctly identified as ``xlsx``.
+    """
+    # Strip Alteryx pipe-delimited sheet/table selector before extension detection
+    clean_path = file_path.split("|||")[0] if "|||" in file_path else file_path
+    _, ext = os.path.splitext(clean_path.lower())
     return _EXT_TO_FORMAT.get(ext, ext.lstrip(".") if ext else "unknown")
 
 
@@ -73,6 +80,15 @@ class InputDataConverter(ToolConverter):
         if file_path and file_path.startswith("aka:"):
             parts = file_path.split("|||", 1)
             connection_string = connection_string or parts[0]  # "aka:NAME"
+            if len(parts) > 1 and parts[1].strip():
+                query = query or parts[1].strip()
+            file_path = ""
+
+        # Handle ODBC connection format: "odbc:DSN=...;...|||<sql>"
+        # FileFormat=23 in Alteryx means ODBC query source.
+        if file_path and file_path.lower().startswith("odbc:"):
+            parts = file_path.split("|||", 1)
+            connection_string = connection_string or parts[0]
             if len(parts) > 1 and parts[1].strip():
                 query = query or parts[1].strip()
             file_path = ""

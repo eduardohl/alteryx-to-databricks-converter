@@ -108,6 +108,10 @@ class PySparkTranslator(BaseExpressionTranslator):
         if mapping.pyspark_template == "__SWITCH__":
             return self._translate_switch_pyspark(translated_args)
 
+        # Special case: DateTimeAdd(datetime, count, unit_str)
+        if mapping.pyspark_template == "__DATEADD__":
+            return self._translate_dateadd_pyspark(translated_args)
+
         template = mapping.pyspark_template
 
         # Handle variable-args placeholder
@@ -135,6 +139,41 @@ class PySparkTranslator(BaseExpressionTranslator):
             result += f".when({value} == {val}, {res})"
         result += f".otherwise({default})"
         return result
+
+    def _translate_dateadd_pyspark(self, args: list[str]) -> str:
+        """Translate DateTimeAdd(datetime, interval_count, interval_type) to PySpark.
+
+        ``args[2]`` is the unit string (already a raw Python string literal like ``"days"``
+        due to ``raw_string_args``).
+        """
+        if len(args) < 3:
+            return "F.current_date()"
+        date_expr = args[0]
+        count_expr = args[1]
+        unit_arg = args[2]  # e.g. '"days"' or '"months"'
+        # Strip surrounding quotes to get the plain unit value
+        unit_val = unit_arg.strip('"\'').lower()
+
+        if unit_val in ("day", "days"):
+            return f"F.date_add({date_expr}, {count_expr})"
+        if unit_val in ("month", "months"):
+            return f"F.add_months({date_expr}, {count_expr})"
+        if unit_val in ("year", "years"):
+            return f"F.add_months({date_expr}, ({count_expr}) * 12)"
+        # General fallback: use Databricks dateadd SQL function.
+        # Extract column name from F.col("name") if possible so it can be used in SQL.
+        import re as _re
+        col_match = _re.match(r'^F\.col\("(.+?)"\)$', date_expr)
+        if col_match:
+            col_name = col_match.group(1).replace("`", "\\`")
+            return f'F.expr(f"dateadd({unit_arg}, {{{count_expr}}}, `{col_name}`)")'
+        # Cannot inline a complex expression into SQL — emit a TODO comment embedded
+        # in a lit(None) so the notebook at least parses cleanly.
+        self._warnings.append(
+            f"DateTimeAdd with unit {unit_arg!r} and complex date expression "
+            f"requires manual adjustment: dateadd({unit_arg}, {count_expr}, <date>)"
+        )
+        return f"F.lit(None)  # TODO: DateTimeAdd({date_expr}, {count_expr}, {unit_arg})"
 
     def _visit_IfExpr(self, node: IfExpr) -> str:
         cond = self._visit(node.condition)

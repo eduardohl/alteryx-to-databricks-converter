@@ -141,7 +141,8 @@ class PySparkGenerator(CodeGenerator):
             if isinstance(node, CommentNode):
                 # Canvas comments become code comments, no variable output
                 if node.comment_text:
-                    cells.append(f"# {node.comment_text}")
+                    comment_lines = node.comment_text.splitlines()
+                    cells.append("\n".join(f"# {line}" for line in comment_lines))
                 continue
 
             input_vars = self._resolve_input_vars(node.node_id, dag, var_map)
@@ -253,7 +254,8 @@ class PySparkGenerator(CodeGenerator):
 
     def _generate_ReadNode(self, node: ReadNode, input_vars: dict[str, str]) -> NodeCodeResult:
         out_var = f"df_{node.node_id}"
-        fmt = self._map_file_format(node.file_format)
+        raw_fmt = node.file_format  # keep original format string for format-specific branches
+        fmt = self._map_file_format(raw_fmt)
         path = node.file_path or node.table_name or "UNKNOWN_PATH"
         warnings: list[str] = []
 
@@ -274,12 +276,45 @@ class PySparkGenerator(CodeGenerator):
             lines.append(f'{out_var} = spark.sql("""{node.query}""")')
         elif node.source_type == "database" and node.table_name:
             lines = [f'{out_var} = spark.table("{node.table_name}")']
+        elif raw_fmt in ("xlsx", "xls"):
+            # Excel files require a dedicated reader not bundled with Databricks.
+            # Extract sheet name if encoded in path as "file.xlsx|||`SheetName$`"
+            xlsx_path = path
+            sheet_hint = ""
+            if "|||" in path:
+                xlsx_path, sheet_hint = path.split("|||", 1)
+            lines = [
+                f"# TODO: manual conversion required — Excel files need a dedicated reader.",
+                f"# Original path: {xlsx_path}",
+            ]
+            if sheet_hint:
+                lines.append(f"# Sheet: {sheet_hint.strip()}")
+            lines += [
+                "# Options:",
+                "#   1. Use pandas: import pandas as pd; df = pd.read_excel(path, sheet_name='...')",
+                "#      then: df_{node_id} = spark.createDataFrame(df)".replace("{node_id}", str(node.node_id)),
+                "#   2. Install com.crealytics:spark-excel and use spark.read.format('excel')",
+                f"{out_var} = None  # PLACEHOLDER — replace with Excel read logic",
+            ]
+            warnings.append(f"Input node {node.node_id}: Excel file requires manual conversion (no built-in Excel reader)")
         else:
             option_chain = ""
             if options:
                 opt_parts = ", ".join(f".option({o})" for o in options)
                 option_chain = opt_parts
-            lines = [f'{out_var} = spark.read.format("{fmt}"){option_chain}.load("{path}")']
+            # Escape backslashes so the path embeds safely in a Python string literal
+            escaped_path = path.replace("\\", "\\\\")
+            # Warn about Windows UNC paths that are inaccessible in Databricks
+            if path.startswith("\\\\") or (path.startswith("\\") and len(path) > 1 and path[1] != "\\"):
+                lines = [
+                    "# WARNING: local/network path detected — not accessible from Databricks.",
+                    "# Upload the file to DBFS or a Unity Catalog Volume and update the path below.",
+                    f"# Original path: {path}",
+                    f'{out_var} = spark.read.format("{fmt}"){option_chain}.load("{escaped_path}")',
+                ]
+                warnings.append(f"Input node {node.node_id}: path '{path}' is a local/UNC path — needs migration to cloud storage")
+            else:
+                lines = [f'{out_var} = spark.read.format("{fmt}"){option_chain}.load("{escaped_path}")']
 
         if node.record_limit is not None:
             lines.append(f"{out_var} = {out_var}.limit({node.record_limit})")
@@ -313,7 +348,17 @@ class PySparkGenerator(CodeGenerator):
                 ]
                 warnings.append(f"Output node {node.node_id}: '{fmt}' format replaced with Delta table")
             else:
-                lines = [f'{inp}.write.format("{fmt}").mode("{mode}").save("{path}")']
+                escaped_path = path.replace("\\", "\\\\")
+                if path.startswith("\\\\") or (path.startswith("\\") and len(path) > 1 and path[1] != "\\"):
+                    lines = [
+                        "# WARNING: local/network path detected — not accessible from Databricks.",
+                        "# Update the path below to a DBFS path or Unity Catalog Volume.",
+                        f"# Original path: {path}",
+                        f'{inp}.write.format("{fmt}").mode("{mode}").save("{escaped_path}")',
+                    ]
+                    warnings.append(f"Output node {node.node_id}: path '{path}' is a local/UNC path — needs migration to cloud storage")
+                else:
+                    lines = [f'{inp}.write.format("{fmt}").mode("{mode}").save("{escaped_path}")']
 
         return NodeCodeResult(code_lines=lines, output_vars={}, warnings=warnings)
 
@@ -369,8 +414,33 @@ class PySparkGenerator(CodeGenerator):
                 expr = self._translator.translate_string(node.expression)
                 warnings.extend(self._translator.warnings)
             except BaseTranslationError as exc:
-                expr = f'F.expr("{node.expression}")'
+                # Expression could not be parsed — emit a placeholder so the notebook
+                # at least loads cleanly, with a clear TODO for manual conversion.
+                raw_escaped = node.expression.replace("\\", "\\\\").replace('"', '\\"')
+                expr = "F.lit(True)  # PLACEHOLDER — see TODO below"
                 warnings.append(f"Filter expression fallback for node {node.node_id}: {exc}")
+                manual_lines = [
+                    f"# TODO: manual conversion required — filter expression parse failed: {exc}",
+                    f'# Original Alteryx expression: "{raw_escaped}"',
+                    f"# Replace the F.lit(True) placeholder below with the correct PySpark condition.",
+                ]
+                lines = manual_lines  # will be extended below
+                if need_true and need_false:
+                    lines += [
+                        f"_filter_cond_{node.node_id} = {expr}",
+                        f"{out_true} = {inp}.filter(_filter_cond_{node.node_id})",
+                        f"{out_false} = {inp}.filter(~(_filter_cond_{node.node_id}))",
+                    ]
+                elif need_true:
+                    lines += [f"{out_true} = {inp}  # passthrough — replace with correct filter"]
+                else:
+                    lines += [f"{out_false} = {inp}.limit(0)  # passthrough — replace with correct filter"]
+                output_vars_local: dict[str, str] = {"Output": out_true}
+                if need_true:
+                    output_vars_local["True"] = out_true
+                if need_false:
+                    output_vars_local["False"] = out_false
+                return NodeCodeResult(code_lines=lines, output_vars=output_vars_local, warnings=warnings)
 
             if need_true and need_false:
                 # Both branches needed — use a shared condition variable
@@ -409,8 +479,11 @@ class PySparkGenerator(CodeGenerator):
                 expr = self._translator.translate_string(fixed_expression)
                 warnings.extend(self._translator.warnings)
             except (BaseTranslationError, ParserError) as exc:
-                expr = f'F.expr("{formula.expression}")'
+                raw_escaped = formula.expression.replace("\\", "\\\\").replace('"', '\\"')
+                expr = "F.lit(None)  # PLACEHOLDER"
                 warnings.append(f"Formula expression fallback for '{formula.output_field}': {exc}")
+                lines.append(f'# TODO: manual conversion required — expression parse failed: {exc}')
+                lines.append(f'# Original Alteryx expression: "{raw_escaped}"')
             lines.append(f'{out_var} = {out_var}.withColumn("{formula.output_field}", {expr})')
 
         return NodeCodeResult(

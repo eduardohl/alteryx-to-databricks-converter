@@ -306,8 +306,11 @@ class AlteryxTokenizer:
             peek += 1
 
         if peek < len(expr) and expr[peek] == "(":
-            # It's a function call, unless it's a keyword like IF
-            if upper not in KEYWORDS and upper not in LOGICAL_WORDS:
+            # It's a function call unless it's a control-flow keyword (IF/THEN/ELSE/etc.).
+            # NULL/TRUE/FALSE followed by '(' should be treated as function calls so that
+            # Null() (which maps to F.lit(None)) parses correctly.
+            _CONTROL_KEYWORDS = KEYWORDS - {"NULL", "TRUE", "FALSE"}
+            if upper not in _CONTROL_KEYWORDS and upper not in LOGICAL_WORDS:
                 return Token(TokenType.FUNCTION, word, start), pos
 
         if upper in LOGICAL_WORDS:

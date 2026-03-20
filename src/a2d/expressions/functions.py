@@ -159,11 +159,12 @@ _register("DateTimeMinutes", "F.minute({0})", "MINUTE({0})", 1, 1)
 _register("DateTimeSeconds", "F.second({0})", "SECOND({0})", 1, 1)
 _register(
     "DateTimeAdd",
-    "F.expr(f'dateadd({{{2}}}, {{{1}}}, {{{0}}})')",
+    "__DATEADD__",
     "DATEADD({2}, {1}, {0})",
     3,
     3,
-    notes="Args: datetime, interval_count, interval_type",
+    notes="Args: datetime, interval_count, interval_type — special-cased in translator",
+    raw_string_args=frozenset({2}),
 )
 _register(
     "DateTimeDiff",
