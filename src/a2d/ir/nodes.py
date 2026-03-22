@@ -584,6 +584,11 @@ class DynamicInputNode(IRNode):
     file_path_pattern: str = ""
     file_format: str = "csv"
     template_file: str = ""
+    # ModifySQL mode fields
+    mode: str = ""                        # e.g. "ModifySQL", "ChangeFile", "ChangeBoth"
+    template_query: str = ""              # SQL template from aka:/odbc: connection
+    template_connection: str = ""         # connection string prefix (aka:/odbc:)
+    modifications: list = field(default_factory=list)  # [{field, replace_text}]
 
 
 @dataclass
