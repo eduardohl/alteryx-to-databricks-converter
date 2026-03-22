@@ -185,8 +185,8 @@ class TestFilterNode:
 
 
 class TestFormulaNode:
-    def test_formula_node_with_expression(self, generator: PySparkGenerator):
-        """Formula with a translated expression produces .withColumn() call."""
+    def test_formula_node_single_field_uses_withcolumns(self, generator: PySparkGenerator):
+        """A single-field formula produces a withColumns({...}) call."""
         read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
         formula = FormulaNode(
             node_id=2,
@@ -206,8 +206,55 @@ class TestFormulaNode:
         output = generator.generate(dag)
         content = output.files[0].content
 
-        assert 'withColumn("FullName"' in content
+        assert 'withColumns({"FullName"' in content or 'withColumns({\n    "FullName"' in content
         assert "df_2" in content
+
+    def test_formula_node_multiple_independent_fields_uses_withcolumns(self, generator: PySparkGenerator):
+        """Multiple independent formulas are merged into a single withColumns call."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
+        formula = FormulaNode(
+            node_id=2,
+            original_tool_type="Formula",
+            formulas=[
+                FormulaField(output_field="A", expression="1"),
+                FormulaField(output_field="B", expression="2"),
+            ],
+        )
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(formula)
+        dag.add_edge(1, 2)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+
+        # Should be exactly one withColumns call, not two separate withColumn calls
+        assert content.count(".withColumns(") == 1
+        assert '"A"' in content
+        assert '"B"' in content
+
+    def test_formula_node_dependent_fields_uses_sequential_withcolumn(self, generator: PySparkGenerator):
+        """Formulas where B references A's output field fall back to sequential withColumn calls."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
+        formula = FormulaNode(
+            node_id=2,
+            original_tool_type="Formula",
+            formulas=[
+                FormulaField(output_field="A", expression="[X] + 1"),
+                FormulaField(output_field="B", expression="[A] * 2"),  # B depends on A
+            ],
+        )
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(formula)
+        dag.add_edge(1, 2)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+
+        # Sequential: two separate withColumn calls
+        assert content.count('.withColumn("A"') == 1
+        assert content.count('.withColumn("B"') == 1
 
 
 class TestJoinNode:
@@ -382,7 +429,7 @@ class TestUnsupportedNode:
         assert "UNSUPPORTED" in content
         assert "SpatialMatch" in content
         assert "Geospatial tools are not supported" in content
-        assert "passthrough placeholder" in content
+        assert "TODO: Manual conversion required." in content
 
 
 class TestNotebookFormat:

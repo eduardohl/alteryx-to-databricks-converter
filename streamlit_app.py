@@ -50,6 +50,7 @@ def _run_conversion(
             generate_orchestration=include_orchestration,
             catalog_name=catalog,
             schema_name=schema,
+            include_comments=True,
         )
         pipeline = ConversionPipeline(config)
         result = pipeline.convert(file_path)
@@ -205,6 +206,18 @@ with tab_convert:
 
             # File tabs
             if files:
+                # Syntax validation for Python files
+                from a2d.validation.syntax_validator import SyntaxValidator
+                _validator = SyntaxValidator()
+                for f in files:
+                    if f["file_type"] == "python":
+                        _vr = _validator.validate_string(f["content"], filename=f["filename"])
+                        if _vr.is_valid:
+                            st.success(f"✓ Syntax valid: {f['filename']}")
+                        else:
+                            for _err in _vr.errors:
+                                st.error(f"✗ Syntax error in {f['filename']}: {_err}")
+
                 file_tabs = st.tabs([f["filename"] for f in files])
                 for ftab, f in zip(file_tabs, files):
                     with ftab:

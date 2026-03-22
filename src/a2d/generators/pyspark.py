@@ -158,15 +158,31 @@ class PySparkGenerator(CodeGenerator):
             # Register output variables
             var_map[node.node_id] = result.output_vars
 
+            # Eliminate pure passthrough cells: if the only generated line is a simple
+            # variable alias "df_N = df_M" (no method calls), redirect var_map to the
+            # source variable so downstream nodes skip the indirection entirely.
+            out_var = result.output_vars.get("Output", "")
+            if out_var and len(result.code_lines) == 1 and not node.annotation:
+                _m = re.match(r"^(df_\d+) = (df_\d+)$", result.code_lines[0])
+                if _m and _m.group(1) == out_var:
+                    var_map[node.node_id] = {"Output": _m.group(2)}
+                    node_count += 1
+                    continue  # nothing to emit for this cell
+
+            # Fan-out caching: if this node feeds 2+ downstream nodes, cache its output
+            # so Spark doesn't recompute the same DataFrame for each consumer.
+            out_var = result.output_vars.get("Output")
+            if out_var and len(dag.get_successors(node.node_id)) >= 2:
+                result.code_lines.append(f"{out_var}.cache()  # fan-out node: result reused by multiple downstream steps")
+
             # Build cell content
             annotation = ""
             if self.config.include_comments and node.annotation:
                 # Prefix every line with # to avoid SyntaxError on multi-line annotations
                 annotation_lines = node.annotation.splitlines()
                 annotation = "\n".join(f"# {line}" for line in annotation_lines) + "\n"
-            comment = ""
-            if self.config.include_comments:
-                comment = f"# Step {node.node_id}: {node.original_tool_type or type(node).__name__}\n"
+            # Step header is always emitted — it's navigation metadata, not verbose noise
+            comment = f"# Step {node.node_id}: {node.original_tool_type or type(node).__name__}\n"
 
             cell = annotation + comment + "\n".join(result.code_lines)
             cells.append(cell)
@@ -470,9 +486,11 @@ class PySparkGenerator(CodeGenerator):
     def _generate_FormulaNode(self, node: FormulaNode, input_vars: dict[str, str]) -> NodeCodeResult:
         inp = self._get_single_input(input_vars)
         out_var = f"df_{node.node_id}"
-        lines = [f"{out_var} = {inp}"]
         warnings: list[str] = []
+        todo_lines: list[str] = []
 
+        # Translate all formulas up front so we can inspect dependencies
+        translated: list[tuple[str, str]] = []  # (output_field, pyspark_expr)
         for formula in node.formulas:
             try:
                 fixed_expression = self._fix_implicit_field_refs(formula.expression, formula.output_field)
@@ -482,9 +500,34 @@ class PySparkGenerator(CodeGenerator):
                 raw_escaped = formula.expression.replace("\\", "\\\\").replace('"', '\\"')
                 expr = "F.lit(None)  # PLACEHOLDER"
                 warnings.append(f"Formula expression fallback for '{formula.output_field}': {exc}")
-                lines.append(f'# TODO: manual conversion required — expression parse failed: {exc}')
-                lines.append(f'# Original Alteryx expression: "{raw_escaped}"')
-            lines.append(f'{out_var} = {out_var}.withColumn("{formula.output_field}", {expr})')
+                todo_lines.append(f'# TODO: manual conversion required — expression parse failed: {exc}')
+                todo_lines.append(f'# Original Alteryx expression: "{raw_escaped}"')
+            translated.append((formula.output_field, expr))
+
+        lines: list[str] = todo_lines[:]
+
+        if not translated:
+            return NodeCodeResult(code_lines=lines, output_vars={"Output": inp}, warnings=warnings)
+
+        # Detect whether any formula references a previous formula's output field.
+        # If so, sequential withColumn calls are required to preserve evaluation order.
+        defined_fields: list[str] = []
+        has_sequential_dependency = False
+        for field_name, expr in translated:
+            if any(f'F.col("{prev}")' in expr for prev in defined_fields):
+                has_sequential_dependency = True
+                break
+            defined_fields.append(field_name)
+
+        if has_sequential_dependency:
+            # Fall back to sequential withColumn calls to preserve inter-formula dependencies
+            for i, (field_name, expr) in enumerate(translated):
+                src = inp if i == 0 else out_var
+                lines.append(f'{out_var} = {src}.withColumn("{field_name}", {expr})')
+        else:
+            # All formulas are independent — emit a single withColumns call
+            entries = ",\n    ".join(f'"{field_name}": {expr}' for field_name, expr in translated)
+            lines.append(f"{out_var} = {inp}.withColumns({{\n    {entries},\n}})")
 
         return NodeCodeResult(
             code_lines=lines,
@@ -538,7 +581,6 @@ class PySparkGenerator(CodeGenerator):
     def _generate_SelectNode(self, node: SelectNode, input_vars: dict[str, str]) -> NodeCodeResult:
         inp = self._get_single_input(input_vars)
         out_var = f"df_{node.node_id}"
-        lines = [f"{out_var} = {inp}"]
 
         renames: list[tuple[str, str]] = []
         drops: list[str] = []
@@ -549,12 +591,17 @@ class PySparkGenerator(CodeGenerator):
             elif op.action == FieldAction.RENAME and op.rename_to:
                 renames.append((op.field_name, op.rename_to))
 
-        for old, new in renames:
-            lines.append(f'{out_var} = {out_var}.withColumnRenamed("{old}", "{new}")')
+        # No-op Select: nothing to rename or drop — pass input through directly
+        if not renames and not drops:
+            return NodeCodeResult(code_lines=[], output_vars={"Output": inp})
 
+        # Build a single chained expression: inp.withColumnRenamed(...).drop(...)
+        chain_parts = [f'    .withColumnRenamed("{old}", "{new}")' for old, new in renames]
         if drops:
             drop_args = ", ".join(f'"{d}"' for d in drops)
-            lines.append(f"{out_var} = {out_var}.drop({drop_args})")
+            chain_parts.append(f"    .drop({drop_args})")
+        chain_body = "\n".join(chain_parts)
+        lines: list[str] = [f"{out_var} = (\n    {inp}\n{chain_body}\n)"]
 
         return NodeCodeResult(
             code_lines=lines,
@@ -673,7 +720,8 @@ class PySparkGenerator(CodeGenerator):
         inp = self._get_single_input(input_vars)
         out_var = f"df_{node.node_id}"
         warnings: list[str] = []
-        lines = [f"{out_var} = {inp}"]
+        todo_lines: list[str] = []
+        field_exprs: list[tuple[str, str]] = []  # (output_name, expr)
 
         for fld in node.fields:
             try:
@@ -681,11 +729,19 @@ class PySparkGenerator(CodeGenerator):
                 expr = self._translator.translate_string(expr_str)
                 warnings.extend(self._translator.warnings)
             except (BaseTranslationError, ParserError) as exc:
-                expr = f'F.col("{fld}")'
+                expr = f'F.col("{fld}")  # PLACEHOLDER'
                 warnings.append(f"MultiFieldFormula fallback for field '{fld}': {exc}")
+                todo_lines.append(f'# TODO: MultiFieldFormula fallback for "{fld}": {exc}')
 
             output_name = f"{fld}_out" if node.copy_output else fld
-            lines.append(f'{out_var} = {out_var}.withColumn("{output_name}", {expr})')
+            field_exprs.append((output_name, expr))
+
+        lines: list[str] = todo_lines[:]
+        if field_exprs:
+            entries = ",\n    ".join(f'"{name}": {expr}' for name, expr in field_exprs)
+            lines.append(f"{out_var} = {inp}.withColumns({{\n    {entries},\n}})")
+        else:
+            lines.append(f"{out_var} = {inp}")
 
         return NodeCodeResult(
             code_lines=lines,
@@ -744,14 +800,10 @@ class PySparkGenerator(CodeGenerator):
 
     def _generate_AutoFieldNode(self, node: AutoFieldNode, input_vars: dict[str, str]) -> NodeCodeResult:
         inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        lines = [
-            "# AutoField: automatic type sizing (no-op in Spark)",
-            f"{out_var} = {inp}",
-        ]
+        # AutoField is a no-op in Spark — pass input through directly
         return NodeCodeResult(
-            code_lines=lines,
-            output_vars={"Output": out_var},
+            code_lines=["# AutoField: automatic type sizing (no-op in Spark — passthrough)"],
+            output_vars={"Output": inp},
         )
 
     def _generate_GenerateRowsNode(self, node: GenerateRowsNode, input_vars: dict[str, str]) -> NodeCodeResult:
@@ -813,6 +865,7 @@ class PySparkGenerator(CodeGenerator):
 
         join_type = node.join_type or "inner"
 
+        no_keys_warning = False
         if node.join_keys:
             key_pairs = [f'{left_var}["{jk.left_field}"] == {right_var}["{jk.right_field}"]' for jk in node.join_keys]
             condition = " & ".join(f"({kp})" for kp in key_pairs)
@@ -820,6 +873,7 @@ class PySparkGenerator(CodeGenerator):
                 condition = key_pairs[0]
         else:
             condition = "F.lit(True)"
+            no_keys_warning = True
 
         # Determine which outputs are actually wired downstream
         used_anchors = dag.get_outgoing_anchors(node.node_id) if dag is not None else {"Join", "Left", "Right"}
@@ -829,18 +883,32 @@ class PySparkGenerator(CodeGenerator):
 
         lines: list[str] = []
         output_vars: dict[str, str] = {}
+        warnings: list[str] = []
+        if no_keys_warning:
+            lines.append(f"# TODO: Join node {node.node_id} has no join keys — replace F.lit(True) with the correct condition")
+            warnings.append(f"Join node {node.node_id}: no join keys found — manual condition required")
 
         if need_join or (not need_left and not need_right):
-            lines.append(f'{out_join} = {left_var}.join({right_var}, {condition}, "{join_type}")')
-            # Apply post-join column ops (renames first, then drops) for the Join output
+            # Build post-join column ops as a single chain: renames first, then drops
+            post_ops: list[str] = []
             for op in node.select_left + node.select_right:
                 if op.action.value == "rename" and op.rename_to and op.rename_to != op.field_name:
-                    lines.append(f'{out_join} = {out_join}.withColumnRenamed("{op.field_name}", "{op.rename_to}")')
+                    post_ops.append(f'    .withColumnRenamed("{op.field_name}", "{op.rename_to}")')
+            drops_post = []
             for op in node.select_left + node.select_right:
                 if not op.selected:
-                    # Use the renamed name if it was renamed; otherwise original
                     drop_name = op.rename_to if (op.rename_to and op.rename_to != op.field_name) else op.field_name
-                    lines.append(f'{out_join} = {out_join}.drop("{drop_name}")')
+                    drops_post.append(f'"{drop_name}"')
+            if drops_post:
+                post_ops.append(f'    .drop({", ".join(drops_post)})')
+
+            if post_ops:
+                chain_body = "\n".join(post_ops)
+                lines.append(
+                    f'{out_join} = (\n    {left_var}.join({right_var}, {condition}, "{join_type}")\n{chain_body}\n)'
+                )
+            else:
+                lines.append(f'{out_join} = {left_var}.join({right_var}, {condition}, "{join_type}")')
             output_vars["Join"] = out_join
             output_vars["Output"] = out_join
         if need_left:
@@ -856,6 +924,7 @@ class PySparkGenerator(CodeGenerator):
         return NodeCodeResult(
             code_lines=lines,
             output_vars=output_vars,
+            warnings=warnings,
         )
 
     def _generate_UnionNode(self, node: UnionNode, input_vars: dict[str, str]) -> NodeCodeResult:
@@ -1331,10 +1400,45 @@ class PySparkGenerator(CodeGenerator):
 
     def _generate_DynamicInputNode(self, node: DynamicInputNode, input_vars: dict[str, str]) -> NodeCodeResult:
         out_var = f"df_{node.node_id}"
+        inp = self._get_single_input(input_vars) if input_vars else None
+
+        if node.mode == "ModifySQL" and node.template_query and inp:
+            # Emit a loop: for each row from the input df, substitute placeholders
+            # in the SQL template and execute via spark.sql(), then union results.
+            escaped_sql = node.template_query.replace('"""', '\\"\\"\\"')
+            lines: list[str] = [
+                f"# DynamicInput (ModifySQL): executes parameterized SQL once per row of {inp}",
+                f"# Source connection: {node.template_connection}",
+                "# TODO: Map connection above to a Unity Catalog table or Databricks JDBC connection.",
+                f"_rows_{node.node_id} = {inp}.collect()",
+                f"_dfs_{node.node_id} = []",
+                f"for _row in _rows_{node.node_id}:",
+                f'    _sql_{node.node_id} = """{escaped_sql}"""',
+            ]
+            for mod in node.modifications:
+                f_name = mod["field"]
+                placeholder = mod["replace_text"]
+                lines.append(
+                    f'    _sql_{node.node_id} = _sql_{node.node_id}.replace("{placeholder}", str(_row["{f_name}"]))'
+                )
+            lines += [
+                f"    _dfs_{node.node_id}.append(spark.sql(_sql_{node.node_id}))",
+                f"{out_var} = _dfs_{node.node_id}[0] if _dfs_{node.node_id} else spark.createDataFrame([], schema=None)",
+                f"for _df in _dfs_{node.node_id}[1:]:",
+                f"    {out_var} = {out_var}.unionByName(_df, allowMissingColumns=True)",
+            ]
+            return NodeCodeResult(
+                code_lines=lines,
+                output_vars={"Output": out_var},
+                warnings=[f"DynamicInput node {node.node_id}: SQL loop generated — map connection to Databricks"],
+            )
+
+        # Fallback: file-pattern mode or unrecognised mode
         fmt = self._map_file_format(node.file_format)
         pattern = node.file_path_pattern or "*.csv"
         lines = [
             "# DynamicInput: read multiple files matching pattern",
+            "# TODO: Adjust path pattern for Databricks DBFS / Unity Catalog Volume",
             f'{out_var} = spark.read.format("{fmt}").option("header", "true").load("{pattern}")',
         ]
         return NodeCodeResult(
@@ -1364,11 +1468,9 @@ class PySparkGenerator(CodeGenerator):
 
     def _generate_WorkflowControlNode(self, node: WorkflowControlNode, input_vars: dict[str, str]) -> NodeCodeResult:
         inp = self._get_single_input(input_vars) if input_vars else None
-        out_var = f"df_{node.node_id}"
         lines = [f"# {node.original_tool_type}: {node.control_type} - no Databricks equivalent"]
-        if inp:
-            lines.append(f"{out_var} = {inp}  # passthrough")
-        return NodeCodeResult(code_lines=lines, output_vars={"Output": out_var} if inp else {})
+        # Pass inp through directly — no identity assignment
+        return NodeCodeResult(code_lines=lines, output_vars={"Output": inp} if inp else {})
 
     def _generate_MacroIONode(self, node: MacroIONode, input_vars: dict[str, str]) -> NodeCodeResult:
         out_var = f"df_{node.node_id}"
@@ -2199,11 +2301,11 @@ class PySparkGenerator(CodeGenerator):
     def _unsupported_passthrough(self, node: IRNode, input_vars: dict[str, str], label: str | None = None) -> NodeCodeResult:
         """Emit a concise passthrough for unsupported node types.
 
-        When ``config.verbose_unsupported`` is True, additional TODO lines are
-        emitted for debugging.  Otherwise a single comment + assignment is used.
+        Instead of emitting a redundant ``df_N = df_M`` identity assignment,
+        the input variable is returned directly as the output so downstream
+        nodes reference the original DataFrame without an indirection chain.
         """
         inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
         tool = label or node.original_tool_type or node.original_plugin_name or type(node).__name__
         reason = getattr(node, "unsupported_reason", None) or "No auto-conversion available"
 
@@ -2212,17 +2314,13 @@ class PySparkGenerator(CodeGenerator):
                 f"# UNSUPPORTED: {tool}",
                 f"# Reason: {reason}",
                 "# TODO: Manual conversion required.",
-                f"{out_var} = {inp}  # passthrough placeholder",
             ]
         else:
-            lines = [
-                f"# {tool}: manual conversion required",
-                f"{out_var} = {inp}",
-            ]
+            lines = [f"# {tool}: manual conversion required"]
 
         return NodeCodeResult(
             code_lines=lines,
-            output_vars={"Output": out_var},
+            output_vars={"Output": inp},   # reuse input var — no identity assignment
             warnings=[f"Unsupported node {node.node_id} ({tool}): {reason}"],
         )
 
