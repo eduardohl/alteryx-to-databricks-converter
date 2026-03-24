@@ -177,12 +177,23 @@ def version() -> None:
 
 
 def _write_output(output, output_dir: Path) -> None:
-    """Write all generated files to the output directory."""
+    """Write all generated files to the output directory and validate Python syntax."""
+    from a2d.validation.syntax_validator import SyntaxValidator
+
+    validator = SyntaxValidator()
     for f in output.files:
         path = output_dir / f.filename
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f.content)
         console.print(f"  Written: {path}")
+        if path.suffix == ".py":
+            result = validator.validate_file(path)
+            if result.is_valid:
+                console.print(f"  [green]✓ Syntax OK[/green]: {path.name}")
+            else:
+                console.print(f"  [red]✗ Syntax error[/red]: {path.name}")
+                for err in result.errors:
+                    console.print(f"    {err}")
 
 
 def _run_batch_conversion(

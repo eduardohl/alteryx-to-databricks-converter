@@ -496,6 +496,9 @@ class PySparkGenerator(CodeGenerator):
                 fixed_expression = self._fix_implicit_field_refs(formula.expression, formula.output_field)
                 expr = self._translator.translate_string(fixed_expression)
                 warnings.extend(self._translator.warnings)
+                # Bare numeric literal used as a column expression needs F.lit()
+                if re.match(r'^-?\d+(\.\d+)?$', expr.strip()):
+                    expr = f"F.lit({expr})"
             except (BaseTranslationError, ParserError) as exc:
                 raw_escaped = formula.expression.replace("\\", "\\\\").replace('"', '\\"')
                 expr = "F.lit(None)  # PLACEHOLDER"
@@ -637,7 +640,9 @@ class PySparkGenerator(CodeGenerator):
         elif node.sample_method == "random" and node.n_records is not None:
             lines = [
                 f"# Random sample of {node.n_records} records",
-                f"_frac_{node.node_id} = min(1.0, {node.n_records} * 2 / max(1, {inp}.count()))",
+                f"_count_{node.node_id} = {inp}.count()",
+                f"_frac_{node.node_id} = ({node.n_records} * 2 / _count_{node.node_id}) if _count_{node.node_id} > 0 else 1.0",
+                f"_frac_{node.node_id} = _frac_{node.node_id} if _frac_{node.node_id} <= 1.0 else 1.0",
                 f"{out_var} = {inp}.sample(fraction=_frac_{node.node_id}).limit({node.n_records})",
             ]
         else:
@@ -728,6 +733,9 @@ class PySparkGenerator(CodeGenerator):
                 expr_str = node.expression.replace("[_CurrentField_]", f"[{fld}]")
                 expr = self._translator.translate_string(expr_str)
                 warnings.extend(self._translator.warnings)
+                # Bare numeric literal used as a column expression needs F.lit()
+                if re.match(r'^-?\d+(\.\d+)?$', expr.strip()):
+                    expr = f"F.lit({expr})"
             except (BaseTranslationError, ParserError) as exc:
                 expr = f'F.col("{fld}")  # PLACEHOLDER'
                 warnings.append(f"MultiFieldFormula fallback for field '{fld}': {exc}")
@@ -948,7 +956,7 @@ class PySparkGenerator(CodeGenerator):
         )
 
     def _generate_AppendFieldsNode(self, node: AppendFieldsNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        target = input_vars.get("Target", input_vars.get("Input", "MISSING_TARGET"))
+        target = input_vars.get("Targets", input_vars.get("Target", input_vars.get("Input", "MISSING_TARGET")))
         source = input_vars.get("Source", "MISSING_SOURCE")
         out_var = f"df_{node.node_id}"
 
@@ -1079,15 +1087,14 @@ class PySparkGenerator(CodeGenerator):
                 f'{out_var} = {inp}.withColumn("{root}", F.explode(F.split(F.col("{node.field_name}"), "{node.delimiter}")))',
             ]
         else:
+            num = node.num_columns or 5
+            entries = ",\n    ".join(
+                f'"{root}_{i + 1}": _split_{node.node_id}[{i}]' for i in range(num)
+            )
             lines = [
                 f'_split_{node.node_id} = F.split(F.col("{node.field_name}"), "{node.delimiter}")',
-                f'{out_var} = {inp}.withColumn("_split_arr_{node.node_id}", _split_{node.node_id})',
+                f"{out_var} = {inp}.withColumns({{\n    {entries},\n}})",
             ]
-            num = node.num_columns or 5
-            for i in range(num):
-                col_name = f"{root}_{i + 1}"
-                lines.append(f'{out_var} = {out_var}.withColumn("{col_name}", F.col("_split_arr_{node.node_id}")[{i}])')
-            lines.append(f'{out_var} = {out_var}.drop("_split_arr_{node.node_id}")')
 
         return NodeCodeResult(
             code_lines=lines,
