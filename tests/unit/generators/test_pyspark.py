@@ -620,3 +620,142 @@ class TestEdgeCases:
         output = generator.generate(dag)
         assert output.stats["total_nodes"] == 2
         assert output.stats["unsupported_nodes"] == 1
+
+
+class TestReadNodeInlining:
+    """Tests for single-use DB ReadNode inlining (Venkata feedback)."""
+
+    def test_single_use_db_read_inlines_into_downstream(self, generator: PySparkGenerator):
+        """A DB ReadNode with exactly 1 successor is inlined — no df_N variable emitted."""
+        read = ReadNode(
+            node_id=1,
+            original_tool_type="Input Data",
+            source_type="database",
+            query="select * from my_table",
+            connection_string="aka:MYCONN",
+        )
+        formula = FormulaNode(
+            node_id=2,
+            original_tool_type="Formula",
+            formulas=[FormulaField(output_field="x", expression='[x] + 1')],
+        )
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(formula)
+        dag.add_edge(1, 2)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+
+        # The intermediate df_1 variable should NOT appear as an assignment
+        assert "df_1 = spark.sql" not in content
+        # The SQL expression should be inlined into the downstream cell
+        assert 'spark.sql("""select * from my_table""")' in content
+        # The downstream step comment must carry the inline attribution
+        assert "[input: Step 1 (Input)" in content
+        assert "TODO: map to Unity Catalog" in content
+
+    def test_fan_out_db_read_stays_named(self, generator: PySparkGenerator):
+        """A DB ReadNode with 2+ successors keeps its named variable (inlining would run SQL twice)."""
+        read = ReadNode(
+            node_id=1,
+            original_tool_type="Input Data",
+            source_type="database",
+            query="select * from my_table",
+        )
+        formula1 = FormulaNode(
+            node_id=2,
+            original_tool_type="Formula",
+            formulas=[FormulaField(output_field="a", expression="1")],
+        )
+        formula2 = FormulaNode(
+            node_id=3,
+            original_tool_type="Formula",
+            formulas=[FormulaField(output_field="b", expression="2")],
+        )
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(formula1)
+        dag.add_node(formula2)
+        dag.add_edge(1, 2)
+        dag.add_edge(1, 3)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+
+        # Named variable must be present
+        assert "df_1 = spark.sql" in content
+        # Fan-out comment must list the downstream steps
+        assert "shared by Steps" in content
+
+    def test_db_read_todo_includes_unity_catalog_sample(self, generator: PySparkGenerator):
+        """DB ReadNode TODO comment includes concrete Unity Catalog syntax options."""
+        read = ReadNode(
+            node_id=1,
+            original_tool_type="Input Data",
+            source_type="database",
+            query="select * from t",
+            connection_string="aka:CONN",
+        )
+        # Give it 2 successors so it stays named (making it easier to inspect its own cell)
+        f1 = FormulaNode(node_id=2, original_tool_type="Formula", formulas=[FormulaField(output_field="x", expression="1")])
+        f2 = FormulaNode(node_id=3, original_tool_type="Formula", formulas=[FormulaField(output_field="y", expression="2")])
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(f1)
+        dag.add_node(f2)
+        dag.add_edge(1, 2)
+        dag.add_edge(1, 3)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+
+        assert "spark.table(" in content
+        assert "catalog.schema.table_name" in content
+        assert "jdbc" in content.lower()
+
+
+class TestStringEscaping:
+    """Tests for _esc() applied to paths and field names (Venkata syntax error fix)."""
+
+    def test_path_with_double_quote_does_not_produce_syntax_error(self, generator: PySparkGenerator):
+        """A file path containing a double-quote must be escaped so generated code is valid Python."""
+        import ast
+        node = ReadNode(
+            node_id=1,
+            original_tool_type="Input Data",
+            file_path='/data/folder"name"/file.csv',
+            file_format="csv",
+        )
+        dag = _make_dag_with_node(node)
+        output = generator.generate(dag)
+        content = output.files[0].content
+        # Must parse as valid Python
+        ast.parse(content)
+        # The escaped quote must appear in the path string
+        assert '\\"' in content
+
+    def test_write_path_with_double_quote_is_escaped(self, generator: PySparkGenerator):
+        """WriteNode path containing a double-quote is safely escaped."""
+        import ast
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/in.csv", file_format="csv")
+        write = WriteNode(
+            node_id=2,
+            original_tool_type="Output Data",
+            file_path='/out/folder"name"/result.csv',
+            file_format="csv",
+        )
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(write)
+        dag.add_edge(1, 2)
+
+        output = generator.generate(dag)
+        content = output.files[0].content
+        ast.parse(content)
+
+    def test_esc_helper_escapes_backslash_and_quote(self, generator: PySparkGenerator):
+        """_esc() escapes both backslashes and double-quotes."""
+        assert generator._esc("C:\\path") == "C:\\\\path"
+        assert generator._esc('say "hi"') == 'say \\"hi\\"'
+        assert generator._esc('C:\\"test"') == 'C:\\\\\\"test\\"'

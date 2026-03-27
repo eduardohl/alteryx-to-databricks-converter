@@ -14,6 +14,7 @@ from a2d.expressions.base_translator import BaseTranslationError
 from a2d.expressions.parser import ParserError
 from a2d.expressions.translator import PySparkTranslator
 from a2d.generators.base import CodeGenerator, GeneratedFile, GeneratedOutput, NodeCodeResult
+from a2d.utils.types import alteryx_fmt_to_spark
 from a2d.ir.graph import WorkflowDAG
 from a2d.ir.nodes import (
     ABAnalysisNode,
@@ -123,6 +124,11 @@ class PySparkGenerator(CodeGenerator):
         super().__init__(config)
         self._translator = PySparkTranslator()
 
+    @staticmethod
+    def _esc(s: str) -> str:
+        """Escape a string for safe embedding inside a double-quoted Python string literal."""
+        return s.replace("\\", "\\\\").replace('"', '\\"')
+
     # -- Public API ---------------------------------------------------------
 
     def generate(self, dag: WorkflowDAG, workflow_name: str = "workflow") -> GeneratedOutput:
@@ -137,6 +143,11 @@ class PySparkGenerator(CodeGenerator):
         node_count = 0
         unsupported_count = 0
 
+        # Track ReadNodes whose spark.sql(...) expression is inlined into the
+        # single downstream cell rather than materialised as a named variable.
+        # pending_inline_note maps successor_node_id -> comment note to prepend.
+        pending_inline_note: dict[int, str] = {}
+
         for node in ordered_nodes:
             if isinstance(node, CommentNode):
                 # Canvas comments become code comments, no variable output
@@ -144,6 +155,28 @@ class PySparkGenerator(CodeGenerator):
                     comment_lines = node.comment_text.splitlines()
                     cells.append("\n".join(f"# {line}" for line in comment_lines))
                 continue
+
+            # Inline single-use DB ReadNodes: if this node is a plain DB query
+            # that feeds exactly one downstream step, skip emitting it as its own
+            # cell. Store the spark.sql(...) expression as the "variable" in
+            # var_map so the downstream generator picks it up directly.
+            if (
+                isinstance(node, ReadNode)
+                and node.source_type == "database"
+                and node.query
+            ):
+                successors = dag.get_successors(node.node_id)
+                if len(successors) == 1:
+                    safe_query = node.query.replace('"""', '""\\"')
+                    sql_expr = f'spark.sql("""{safe_query}""")'
+                    var_map[node.node_id] = {"Output": sql_expr}
+                    conn_hint = f" — {node.connection_string}" if node.connection_string else ""
+                    todo_hint = " — TODO: map to Unity Catalog" if node.connection_string else ""
+                    pending_inline_note[successors[0].node_id] = (
+                        f"  [input: Step {node.node_id} (Input){conn_hint}{todo_hint}]"
+                    )
+                    node_count += 1
+                    continue  # no cell emitted for this node
 
             input_vars = self._resolve_input_vars(node.node_id, dag, var_map)
             result = self._generate_node_code(node, input_vars, dag=dag)
@@ -172,7 +205,8 @@ class PySparkGenerator(CodeGenerator):
             # Fan-out caching: if this node feeds 2+ downstream nodes, cache its output
             # so Spark doesn't recompute the same DataFrame for each consumer.
             out_var = result.output_vars.get("Output")
-            if out_var and len(dag.get_successors(node.node_id)) >= 2:
+            successors = dag.get_successors(node.node_id)
+            if out_var and len(successors) >= 2:
                 result.code_lines.append(f"{out_var}.cache()  # fan-out node: result reused by multiple downstream steps")
 
             # Build cell content
@@ -181,9 +215,25 @@ class PySparkGenerator(CodeGenerator):
                 # Prefix every line with # to avoid SyntaxError on multi-line annotations
                 annotation_lines = node.annotation.splitlines()
                 annotation = "\n".join(f"# {line}" for line in annotation_lines) + "\n"
-            # Step header is always emitted — it's navigation metadata, not verbose noise
-            comment = f"# Step {node.node_id}: {node.original_tool_type or type(node).__name__}\n"
 
+            # Step header — always emitted as navigation metadata.
+            # For fan-out DB ReadNodes, list the downstream steps so the
+            # Alteryx→Databricks mapping remains visible in both directions.
+            step_label = node.original_tool_type or type(node).__name__
+            if (
+                isinstance(node, ReadNode)
+                and node.source_type == "database"
+                and len(successors) > 1
+            ):
+                consumer_ids = ", ".join(str(s.node_id) for s in successors)
+                step_label += f"  (shared by Steps {consumer_ids})"
+            step_comment = f"# Step {node.node_id}: {step_label}"
+
+            # If an upstream ReadNode was inlined into this cell, append its note.
+            if node.node_id in pending_inline_note:
+                step_comment += pending_inline_note[node.node_id]
+
+            comment = step_comment + "\n"
             cell = annotation + comment + "\n".join(result.code_lines)
             cells.append(cell)
             node_count += 1
@@ -287,9 +337,13 @@ class PySparkGenerator(CodeGenerator):
             lines = []
             if node.connection_string:
                 lines.append(f"# Source database: {node.connection_string}")
-                lines.append("# TODO: Map the connection to a Unity Catalog table or external connection.")
+                lines.append("# TODO: Replace the connection below with your Unity Catalog equivalent. Options:")
+                lines.append('#   spark.table("catalog.schema.table_name")                       # UC managed/external table')
+                lines.append('#   spark.sql("SELECT ... FROM catalog.schema.table_name")         # keep SQL, update table ref')
+                lines.append('#   spark.read.format("jdbc").option("url","jdbc:...").option("dbtable","schema.table").load()  # JDBC')
                 warnings.append(f"Input node {node.node_id}: database connection '{node.connection_string}' needs manual mapping")
-            lines.append(f'{out_var} = spark.sql("""{node.query}""")')
+            safe_query = node.query.replace('"""', '""\\"')
+            lines.append(f'{out_var} = spark.sql("""{safe_query}""")')
         elif node.source_type == "database" and node.table_name:
             lines = [f'{out_var} = spark.table("{node.table_name}")']
         elif raw_fmt in ("xlsx", "xls"):
@@ -318,8 +372,8 @@ class PySparkGenerator(CodeGenerator):
             if options:
                 opt_parts = ", ".join(f".option({o})" for o in options)
                 option_chain = opt_parts
-            # Escape backslashes so the path embeds safely in a Python string literal
-            escaped_path = path.replace("\\", "\\\\")
+            # Escape backslashes and quotes so the path embeds safely in a Python string literal
+            escaped_path = self._esc(path)
             # Warn about Windows UNC paths that are inaccessible in Databricks
             if path.startswith("\\\\") or (path.startswith("\\") and len(path) > 1 and path[1] != "\\"):
                 lines = [
@@ -348,7 +402,7 @@ class PySparkGenerator(CodeGenerator):
         warnings: list[str] = []
 
         if node.destination_type == "database" and node.table_name:
-            lines = [f'{inp}.write.mode("{mode}").saveAsTable("{node.table_name}")']
+            lines = [f'{inp}.write.mode("{mode}").saveAsTable("{self._esc(node.table_name)}")']
         else:
             path = node.file_path or "UNKNOWN_PATH"
             # Unsupported output formats get a comment + Delta fallback
@@ -364,7 +418,7 @@ class PySparkGenerator(CodeGenerator):
                 ]
                 warnings.append(f"Output node {node.node_id}: '{fmt}' format replaced with Delta table")
             else:
-                escaped_path = path.replace("\\", "\\\\")
+                escaped_path = self._esc(path)
                 if path.startswith("\\\\") or (path.startswith("\\") and len(path) > 1 and path[1] != "\\"):
                     lines = [
                         "# WARNING: local/network path detected — not accessible from Databricks.",
@@ -526,10 +580,10 @@ class PySparkGenerator(CodeGenerator):
             # Fall back to sequential withColumn calls to preserve inter-formula dependencies
             for i, (field_name, expr) in enumerate(translated):
                 src = inp if i == 0 else out_var
-                lines.append(f'{out_var} = {src}.withColumn("{field_name}", {expr})')
+                lines.append(f'{out_var} = {src}.withColumn("{self._esc(field_name)}", {expr})')
         else:
             # All formulas are independent — emit a single withColumns call
-            entries = ",\n    ".join(f'"{field_name}": {expr}' for field_name, expr in translated)
+            entries = ",\n    ".join(f'"{self._esc(field_name)}": {expr}' for field_name, expr in translated)
             lines.append(f"{out_var} = {inp}.withColumns({{\n    {entries},\n}})")
 
         return NodeCodeResult(
@@ -1107,10 +1161,10 @@ class PySparkGenerator(CodeGenerator):
         out_field = node.output_field or f"{node.input_field}_converted"
 
         if node.conversion_mode == "parse":
-            fmt = node.format_string or "yyyy-MM-dd"
+            fmt = alteryx_fmt_to_spark(node.format_string or "yyyy-MM-dd")
             lines = [f'{out_var} = {inp}.withColumn("{out_field}", F.to_date(F.col("{node.input_field}"), "{fmt}"))']
         elif node.conversion_mode == "format":
-            fmt = node.format_string or "yyyy-MM-dd"
+            fmt = alteryx_fmt_to_spark(node.format_string or "yyyy-MM-dd")
             lines = [
                 f'{out_var} = {inp}.withColumn("{out_field}", F.date_format(F.col("{node.input_field}"), "{fmt}"))'
             ]
@@ -1416,7 +1470,10 @@ class PySparkGenerator(CodeGenerator):
             lines: list[str] = [
                 f"# DynamicInput (ModifySQL): executes parameterized SQL once per row of {inp}",
                 f"# Source connection: {node.template_connection}",
-                "# TODO: Map connection above to a Unity Catalog table or Databricks JDBC connection.",
+                "# TODO: Replace the connection below with your Unity Catalog equivalent. Options:",
+                '#   spark.table("catalog.schema.table_name")                       # UC managed/external table',
+                '#   spark.sql("SELECT ... FROM catalog.schema.table_name")         # keep SQL, update table ref',
+                '#   spark.read.format("jdbc").option("url","jdbc:...").option("dbtable","schema.table").load()  # JDBC',
                 f"_rows_{node.node_id} = {inp}.collect()",
                 f"_dfs_{node.node_id} = []",
                 f"for _row in _rows_{node.node_id}:",
@@ -1446,7 +1503,7 @@ class PySparkGenerator(CodeGenerator):
         lines = [
             "# DynamicInput: read multiple files matching pattern",
             "# TODO: Adjust path pattern for Databricks DBFS / Unity Catalog Volume",
-            f'{out_var} = spark.read.format("{fmt}").option("header", "true").load("{pattern}")',
+            f'{out_var} = spark.read.format("{fmt}").option("header", "true").load("{self._esc(pattern)}")',
         ]
         return NodeCodeResult(
             code_lines=lines,
@@ -1482,11 +1539,12 @@ class PySparkGenerator(CodeGenerator):
     def _generate_MacroIONode(self, node: MacroIONode, input_vars: dict[str, str]) -> NodeCodeResult:
         out_var = f"df_{node.node_id}"
         if node.direction == "input":
-            default = f', "{node.default_value}"' if node.default_value else ""
+            esc_fn = self._esc(node.field_name)
+            default = f', "{self._esc(node.default_value)}"' if node.default_value else ""
             lines = [
                 f"# MacroInput: {node.field_name}",
-                f'dbutils.widgets.text("{node.field_name}"{default})',
-                f'{out_var}_param = dbutils.widgets.get("{node.field_name}")',
+                f'dbutils.widgets.text("{esc_fn}"{default})',
+                f'{out_var}_param = dbutils.widgets.get("{esc_fn}")',
             ]
         else:
             inp = self._get_single_input(input_vars) if input_vars else None
@@ -1506,14 +1564,15 @@ class PySparkGenerator(CodeGenerator):
         return NodeCodeResult(code_lines=lines, output_vars={"Output": out_var})
 
     def _generate_WidgetNode(self, node: WidgetNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        default = f', "{node.default_value}"' if node.default_value else ""
+        esc_name = self._esc(node.field_name)
+        default = f', "{self._esc(node.default_value)}"' if node.default_value else ""
         if node.widget_type in ("dropdown", "listbox") and node.options:
-            choices = ", ".join(f'"{o}"' for o in node.options)
-            lines = [f'dbutils.widgets.dropdown("{node.field_name}", "{node.options[0] if node.options else ""}",  [{choices}])']
+            choices = ", ".join(f'"{self._esc(o)}"' for o in node.options)
+            lines = [f'dbutils.widgets.dropdown("{esc_name}", "{self._esc(node.options[0]) if node.options else ""}",  [{choices}])']
         elif node.widget_type == "checkbox":
-            lines = [f'dbutils.widgets.dropdown("{node.field_name}", "False", ["True", "False"])']
+            lines = [f'dbutils.widgets.dropdown("{esc_name}", "False", ["True", "False"])']
         else:
-            lines = [f'dbutils.widgets.text("{node.field_name}"{default})']
+            lines = [f'dbutils.widgets.text("{esc_name}"{default})']
         lines.append(f'# Widget: {node.widget_type} - "{node.label or node.field_name}"')
         return NodeCodeResult(code_lines=lines, output_vars={})
 
@@ -1528,7 +1587,7 @@ class PySparkGenerator(CodeGenerator):
             path_prefix = ""
         full_path = f"{path_prefix}{node.bucket_or_container}/{node.path}" if node.bucket_or_container else node.path
         if node.direction == "input":
-            lines = [f'{out_var} = spark.read.format("{fmt}").option("header", "true").load("{full_path}")']
+            lines = [f'{out_var} = spark.read.format("{fmt}").option("header", "true").load("{self._esc(full_path)}")']
             return NodeCodeResult(code_lines=lines, output_vars={"Output": out_var})
         else:
             inp = self._get_single_input(input_vars)

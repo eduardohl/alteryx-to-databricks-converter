@@ -15,6 +15,7 @@ from a2d.expressions.base_translator import BaseTranslationError
 from a2d.expressions.parser import ParserError
 from a2d.expressions.translator import PySparkTranslator
 from a2d.generators.base import CodeGenerator, GeneratedFile, GeneratedOutput
+from a2d.utils.types import alteryx_fmt_to_spark
 from a2d.ir.graph import WorkflowDAG
 from a2d.ir.nodes import (
     ABAnalysisNode,
@@ -532,7 +533,7 @@ class DLTGenerator(CodeGenerator):
         if isinstance(node, DateTimeNode):
             inp = self._get_single_input_read(input_tables)
             out_field = node.output_field or f"{node.input_field}_converted"
-            fmt = node.format_string or "yyyy-MM-dd"
+            fmt = alteryx_fmt_to_spark(node.format_string or "yyyy-MM-dd")
             if node.conversion_mode == "parse":
                 return [f'return {inp}.withColumn("{out_field}", F.to_date(F.col("{node.input_field}"), "{fmt}"))'], warnings
             elif node.conversion_mode == "format":

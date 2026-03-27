@@ -18,6 +18,7 @@ from a2d.expressions.ast import (
 )
 from a2d.expressions.base_translator import BaseExpressionTranslator, BaseTranslationError
 from a2d.expressions.functions import get_function_mapping
+from a2d.utils.types import alteryx_fmt_to_spark
 
 
 class TranslationError(BaseTranslationError):
@@ -99,7 +100,11 @@ class PySparkTranslator(BaseExpressionTranslator):
             if i in mapping.raw_string_args and isinstance(arg, Literal) and arg.literal_type == "string":
                 # Emit as a plain Python string, not F.lit("..."), so PySpark functions
                 # that require a string argument (e.g. date_format format param) work correctly.
-                escaped = str(arg.value).replace("\\", "\\\\").replace('"', '\\"')
+                raw_val = str(arg.value)
+                # Convert Alteryx strftime tokens to Spark Java datetime patterns for date functions
+                if node.function_name.lower() in ("datetimeformat", "datetimeparse", "todate", "todatetime") and i == 1:
+                    raw_val = alteryx_fmt_to_spark(raw_val)
+                escaped = raw_val.replace("\\", "\\\\").replace('"', '\\"')
                 translated_args.append(f'"{escaped}"')
             else:
                 translated_args.append(self._visit(arg))

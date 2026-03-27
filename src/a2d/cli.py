@@ -188,10 +188,8 @@ def _write_output(output, output_dir: Path) -> None:
         console.print(f"  Written: {path}")
         if path.suffix == ".py":
             result = validator.validate_file(path)
-            if result.is_valid:
-                console.print(f"  [green]✓ Syntax OK[/green]: {path.name}")
-            else:
-                console.print(f"  [red]✗ Syntax error[/red]: {path.name}")
+            if not result.is_valid:
+                console.print(f"  [red]✗ Python syntax error[/red]: {path.name}")
                 for err in result.errors:
                     console.print(f"    {err}")
 
