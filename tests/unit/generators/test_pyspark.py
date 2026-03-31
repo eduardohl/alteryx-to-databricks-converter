@@ -759,3 +759,105 @@ class TestStringEscaping:
         assert generator._esc("C:\\path") == "C:\\\\path"
         assert generator._esc('say "hi"') == 'say \\"hi\\"'
         assert generator._esc('C:\\"test"') == 'C:\\\\\\"test\\"'
+
+
+class TestSQLNormalization:
+    """Tests for normalize_sql_for_spark() and its application in generators."""
+
+    def test_getdate_replaced_with_current_timestamp(self):
+        from a2d.utils.types import normalize_sql_for_spark
+        sql = "SELECT GETDATE() AS run_date FROM my_table"
+        result, warns = normalize_sql_for_spark(sql)
+        assert "CURRENT_TIMESTAMP()" in result
+        assert "GETDATE" not in result
+        assert warns == []
+
+    def test_getdate_case_insensitive(self):
+        from a2d.utils.types import normalize_sql_for_spark
+        for variant in ["GETDATE()", "getdate()", "GetDate()", "GETDATE (  )"]:
+            result, _ = normalize_sql_for_spark(f"SELECT {variant} FROM t")
+            assert "CURRENT_TIMESTAMP()" in result
+
+    def test_now_replaced_with_current_timestamp(self):
+        from a2d.utils.types import normalize_sql_for_spark
+        result, _ = normalize_sql_for_spark("SELECT NOW() AS ts FROM t")
+        assert "CURRENT_TIMESTAMP()" in result
+        assert "NOW()" not in result
+
+    def test_sysdate_replaced_with_current_timestamp(self):
+        from a2d.utils.types import normalize_sql_for_spark
+        result, _ = normalize_sql_for_spark("SELECT SYSDATE AS ts FROM t")
+        assert "CURRENT_TIMESTAMP()" in result
+        assert "SYSDATE" not in result
+
+    def test_double_quoted_alias_converted_to_backtick(self):
+        from a2d.utils.types import normalize_sql_for_spark
+        result, _ = normalize_sql_for_spark('SELECT col AS "account_number" FROM t')
+        assert "`account_number`" in result
+        assert '"account_number"' not in result
+
+    def test_hyphen_in_alias_replaced_with_underscore(self):
+        from a2d.utils.types import normalize_sql_for_spark
+        result, _ = normalize_sql_for_spark('SELECT col AS "account-number" FROM t')
+        assert "`account_number`" in result
+        assert "account-number" not in result
+
+    def test_combined_getdate_and_double_quote_alias(self):
+        from a2d.utils.types import normalize_sql_for_spark
+        sql = 'SELECT GETDATE() AS "run-date", acct AS "acct-num" FROM schema.table'
+        result, _ = normalize_sql_for_spark(sql)
+        assert "CURRENT_TIMESTAMP()" in result
+        assert "`run_date`" in result
+        assert "`acct_num`" in result
+        assert "GETDATE" not in result
+
+    def test_no_change_when_no_problematic_patterns(self):
+        from a2d.utils.types import normalize_sql_for_spark
+        sql = "SELECT a, b, c FROM my_table WHERE d = 1"
+        result, warns = normalize_sql_for_spark(sql)
+        assert result == sql
+        assert warns == []
+
+    def test_db_read_node_sql_is_normalized_in_output(self, generator: PySparkGenerator):
+        """ReadNode with GETDATE() and double-quoted alias emits normalized SQL."""
+        query = 'SELECT GETDATE() AS "run-date" FROM schema.table'
+        node = ReadNode(
+            node_id=1,
+            original_tool_type="Input Data",
+            source_type="database",
+            query=query,
+            connection_string="aka:test123",
+        )
+        dag = WorkflowDAG()
+        dag.add_node(node)
+        output = generator.generate(dag)
+        content = output.files[0].content
+        assert "CURRENT_TIMESTAMP()" in content
+        assert "`run_date`" in content
+        assert "GETDATE" not in content
+
+
+class TestDateTimeNodeNowMode:
+    """Tests for DateTimeNode 'now' conversion mode."""
+
+    def test_now_mode_emits_current_timestamp(self, generator: PySparkGenerator):
+        """DateTimeNode with conversion_mode='now' generates F.current_timestamp()."""
+        from a2d.ir.nodes import DateTimeNode
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/in.csv", file_format="csv")
+        dt = DateTimeNode(
+            node_id=2,
+            original_tool_type="DateTime",
+            input_field="some_field",
+            output_field="run_timestamp",
+            conversion_mode="now",
+        )
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(dt)
+        dag.add_edge(1, 2)
+        output = generator.generate(dag)
+        content = output.files[0].content
+        assert "F.current_timestamp()" in content
+        assert "run_timestamp" in content
+        # Should NOT be a passthrough
+        assert 'F.col("some_field")' not in content

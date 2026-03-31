@@ -15,7 +15,7 @@ from a2d.expressions.base_translator import BaseTranslationError
 from a2d.expressions.parser import ParserError
 from a2d.expressions.translator import PySparkTranslator
 from a2d.generators.base import CodeGenerator, GeneratedFile, GeneratedOutput
-from a2d.utils.types import alteryx_fmt_to_spark
+from a2d.utils.types import alteryx_fmt_to_spark, normalize_sql_for_spark
 from a2d.ir.graph import WorkflowDAG
 from a2d.ir.nodes import (
     ABAnalysisNode,
@@ -538,6 +538,8 @@ class DLTGenerator(CodeGenerator):
                 return [f'return {inp}.withColumn("{out_field}", F.to_date(F.col("{node.input_field}"), "{fmt}"))'], warnings
             elif node.conversion_mode == "format":
                 return [f'return {inp}.withColumn("{out_field}", F.date_format(F.col("{node.input_field}"), "{fmt}"))'], warnings
+            elif node.conversion_mode == "now":
+                return [f'return {inp}.withColumn("{out_field}", F.current_timestamp())'], warnings
             return [f'return {inp}.withColumn("{out_field}", F.col("{node.input_field}"))'], warnings
 
         if isinstance(node, JsonParseNode):
@@ -1054,7 +1056,9 @@ class DLTGenerator(CodeGenerator):
         if node.source_type == "database" and node.table_name:
             return [f'return spark.table("{node.table_name}")']
         if node.source_type == "database" and node.query:
-            return [f'return spark.sql("""{node.query}""")']
+            normalized_query, _ = normalize_sql_for_spark(node.query)
+            safe_query = normalized_query.replace('"""', '""\\"')
+            return [f'return spark.sql("""{safe_query}""")']
         path = node.file_path or "UNKNOWN_PATH"
         options = ""
         if fmt == "csv":

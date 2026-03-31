@@ -14,7 +14,7 @@ from a2d.expressions.base_translator import BaseTranslationError
 from a2d.expressions.parser import ParserError
 from a2d.expressions.translator import PySparkTranslator
 from a2d.generators.base import CodeGenerator, GeneratedFile, GeneratedOutput, NodeCodeResult
-from a2d.utils.types import alteryx_fmt_to_spark
+from a2d.utils.types import alteryx_fmt_to_spark, normalize_sql_for_spark
 from a2d.ir.graph import WorkflowDAG
 from a2d.ir.nodes import (
     ABAnalysisNode,
@@ -167,7 +167,8 @@ class PySparkGenerator(CodeGenerator):
             ):
                 successors = dag.get_successors(node.node_id)
                 if len(successors) == 1:
-                    safe_query = node.query.replace('"""', '""\\"')
+                    normalized_query, _sql_warns = normalize_sql_for_spark(node.query)
+                    safe_query = normalized_query.replace('"""', '""\\"')
                     sql_expr = f'spark.sql("""{safe_query}""")'
                     var_map[node.node_id] = {"Output": sql_expr}
                     conn_hint = f" — {node.connection_string}" if node.connection_string else ""
@@ -342,7 +343,8 @@ class PySparkGenerator(CodeGenerator):
                 lines.append('#   spark.sql("SELECT ... FROM catalog.schema.table_name")         # keep SQL, update table ref')
                 lines.append('#   spark.read.format("jdbc").option("url","jdbc:...").option("dbtable","schema.table").load()  # JDBC')
                 warnings.append(f"Input node {node.node_id}: database connection '{node.connection_string}' needs manual mapping")
-            safe_query = node.query.replace('"""', '""\\"')
+            normalized_query, _sql_warns = normalize_sql_for_spark(node.query)
+            safe_query = normalized_query.replace('"""', '""\\"')
             lines.append(f'{out_var} = spark.sql("""{safe_query}""")')
         elif node.source_type == "database" and node.table_name:
             lines = [f'{out_var} = spark.table("{node.table_name}")']
@@ -1168,6 +1170,8 @@ class PySparkGenerator(CodeGenerator):
             lines = [
                 f'{out_var} = {inp}.withColumn("{out_field}", F.date_format(F.col("{node.input_field}"), "{fmt}"))'
             ]
+        elif node.conversion_mode == "now":
+            lines = [f'{out_var} = {inp}.withColumn("{out_field}", F.current_timestamp())']
         else:
             lines = [
                 f"# DateTime conversion mode: {node.conversion_mode}",
@@ -1466,7 +1470,8 @@ class PySparkGenerator(CodeGenerator):
         if node.mode == "ModifySQL" and node.template_query and inp:
             # Emit a loop: for each row from the input df, substitute placeholders
             # in the SQL template and execute via spark.sql(), then union results.
-            escaped_sql = node.template_query.replace('"""', '\\"\\"\\"')
+            normalized_template, _sql_warns = normalize_sql_for_spark(node.template_query)
+            escaped_sql = normalized_template.replace('"""', '\\"\\"\\"')
             lines: list[str] = [
                 f"# DynamicInput (ModifySQL): executes parameterized SQL once per row of {inp}",
                 f"# Source connection: {node.template_connection}",

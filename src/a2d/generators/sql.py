@@ -15,7 +15,7 @@ from a2d.expressions.base_translator import BaseTranslationError
 from a2d.expressions.parser import ParserError
 from a2d.expressions.sql_translator import SparkSQLTranslator
 from a2d.generators.base import CodeGenerator, GeneratedFile, GeneratedOutput
-from a2d.utils.types import alteryx_fmt_to_spark
+from a2d.utils.types import alteryx_fmt_to_spark, normalize_sql_for_spark
 from a2d.ir.graph import WorkflowDAG
 from a2d.ir.nodes import (
     ABAnalysisNode,
@@ -525,6 +525,8 @@ class SQLGenerator(CodeGenerator):
                 return f"SELECT *, TO_DATE(`{node.input_field}`, '{fmt}') AS `{out_field}` FROM {inp}", warnings
             elif node.conversion_mode == "format":
                 return f"SELECT *, DATE_FORMAT(`{node.input_field}`, '{fmt}') AS `{out_field}` FROM {inp}", warnings
+            elif node.conversion_mode == "now":
+                return f"SELECT *, CURRENT_TIMESTAMP() AS `{out_field}` FROM {inp}", warnings
             return f"SELECT *, `{node.input_field}` AS `{out_field}` FROM {inp}", warnings
 
         if isinstance(node, JsonParseNode):
@@ -895,7 +897,8 @@ class SQLGenerator(CodeGenerator):
         if node.source_type == "database" and node.table_name:
             return f"SELECT * FROM {node.table_name}"
         if node.source_type == "database" and node.query:
-            return f"({node.query})"
+            normalized_query, _ = normalize_sql_for_spark(node.query)
+            return f"({normalized_query})"
         fmt = node.file_format.lower() if node.file_format else "csv"
         path = node.file_path or "UNKNOWN_PATH"
         return f"SELECT * FROM {fmt}.`{path}`"
