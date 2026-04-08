@@ -212,9 +212,7 @@ with tab_convert:
                 for f in files:
                     if f["file_type"] == "python":
                         _vr = _validator.validate_string(f["content"], filename=f["filename"])
-                        if _vr.is_valid:
-                            st.success(f"✓ Syntax valid: {f['filename']}")
-                        else:
+                        if not _vr.is_valid:
                             for _err in _vr.errors:
                                 st.error(f"✗ Syntax error in {f['filename']}: {_err}")
 

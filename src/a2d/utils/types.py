@@ -28,6 +28,9 @@ _ALTERYX_FMT_RE = re.compile(r"%[YymbBdHIMSpjAa]")
 _SQL_GETDATE_RE = re.compile(r"\bGETDATE\s*\(\s*\)", re.IGNORECASE)
 _SQL_NOW_RE = re.compile(r"\bNOW\s*\(\s*\)", re.IGNORECASE)
 _SQL_SYSDATE_RE = re.compile(r"\bSYSDATE\b", re.IGNORECASE)
+# Alteryx inline date/time expressions — e.g. (Current Date), (Current Time)
+_SQL_CURRENT_DATE_RE = re.compile(r"\bCurrent\s+Date\b", re.IGNORECASE)
+_SQL_CURRENT_TIME_RE = re.compile(r"\bCurrent\s+Time\b", re.IGNORECASE)
 # Double-quoted SQL identifier (no spaces inside, at least one char)
 _SQL_DQUOTE_ID_RE = re.compile(r'"([^"\s][^"]*[^"\s]|[^"\s])"')
 
@@ -37,12 +40,16 @@ def normalize_sql_for_spark(query: str) -> tuple[str, list[str]]:
 
     Fixes:
     - GETDATE() / NOW() / SYSDATE  →  CURRENT_TIMESTAMP()
+    - Current Date                 →  CURRENT_DATE()
+    - Current Time                 →  CURRENT_TIME()
     - Double-quoted SQL identifiers →  backtick identifiers
     - Hyphens in identifier names   →  underscores
 
     Returns (normalized_query, warnings).
     """
     result = query
+    result = _SQL_CURRENT_DATE_RE.sub("CURRENT_DATE()", result)
+    result = _SQL_CURRENT_TIME_RE.sub("CURRENT_TIME()", result)
     result = _SQL_GETDATE_RE.sub("CURRENT_TIMESTAMP()", result)
     result = _SQL_NOW_RE.sub("CURRENT_TIMESTAMP()", result)
     result = _SQL_SYSDATE_RE.sub("CURRENT_TIMESTAMP()", result)

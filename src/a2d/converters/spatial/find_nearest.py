@@ -23,7 +23,10 @@ class FindNearestConverter(ToolConverter):
         target_field = safe_get(cfg, "TargetSpatialField", "SpatialObj")
         universe_field = safe_get(cfg, "UniverseSpatialField", "SpatialObj")
         max_dist_str = safe_get(cfg, "MaxDistance", "")
-        max_distance = float(max_dist_str) if max_dist_str else None
+        try:
+            max_distance = float(max_dist_str) if max_dist_str else None
+        except ValueError:
+            max_distance = None
         max_matches = int(safe_get(cfg, "MaxMatches", "1") or "1")
         units = safe_get(cfg, "DistanceUnits", "Miles").lower()
 

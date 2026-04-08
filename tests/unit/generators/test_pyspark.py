@@ -818,6 +818,20 @@ class TestSQLNormalization:
         assert result == sql
         assert warns == []
 
+    def test_current_date_replaced_with_spark_function(self):
+        from a2d.utils.types import normalize_sql_for_spark
+        sql = "SELECT (Current Date) as RUN_DT FROM my_table"
+        result, _ = normalize_sql_for_spark(sql)
+        assert "CURRENT_DATE()" in result
+        assert "Current Date" not in result
+
+    def test_current_time_replaced_with_spark_function(self):
+        from a2d.utils.types import normalize_sql_for_spark
+        sql = "SELECT (Current Time) as RUN_TM FROM my_table"
+        result, _ = normalize_sql_for_spark(sql)
+        assert "CURRENT_TIME()" in result
+        assert "Current Time" not in result
+
     def test_db_read_node_sql_is_normalized_in_output(self, generator: PySparkGenerator):
         """ReadNode with GETDATE() and double-quoted alias emits normalized SQL."""
         query = 'SELECT GETDATE() AS "run-date" FROM schema.table'

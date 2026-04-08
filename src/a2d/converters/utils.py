@@ -9,8 +9,14 @@ from __future__ import annotations
 
 
 def safe_get(cfg: dict, key: str, default: str = "") -> str:
-    """Return ``cfg[key]`` as a string, falling back to *default*."""
+    """Return ``cfg[key]`` as a string, falling back to *default*.
+
+    Handles XML-parsed dicts like ``{'@value': '5000'}`` by extracting the
+    ``@value`` (or ``#text``) key before coercing to string.
+    """
     val = cfg.get(key, default)
+    if isinstance(val, dict):
+        val = val.get("@value", val.get("#text", default))
     return val if isinstance(val, str) else str(val) if val is not None else default
 
 
