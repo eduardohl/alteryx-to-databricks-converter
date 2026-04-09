@@ -138,7 +138,8 @@ class SQLGenerator(CodeGenerator):
 
         for node in ordered_nodes:
             if isinstance(node, CommentNode):
-                cte_blocks.append(f"-- {node.comment_text or ''}")
+                comment_lines = (node.comment_text or "").replace("\n", "\n-- ")
+                cte_blocks.append(f"-- {comment_lines}")
                 continue
 
             # Skip no-op passthrough nodes: forward the predecessor's CTE name
@@ -157,7 +158,8 @@ class SQLGenerator(CodeGenerator):
             sql_body, step_warnings = self._generate_cte_body(node, input_ctes)
             warnings.extend(step_warnings)
 
-            cte_blocks.append(f"{name} AS (\n    {sql_body}\n)")
+            indented = sql_body.replace("\n", "\n    ")
+            cte_blocks.append(f"{name} AS (\n    {indented}\n)")
             last_cte = name
             node_count += 1
 
@@ -260,17 +262,15 @@ class SQLGenerator(CodeGenerator):
             return f"SELECT * FROM {inp} WHERE {expr}", warnings
 
         if isinstance(node, FormulaNode):
-            inp = self._get_single_input(input_ctes)
-            extras = []
+            result = self._get_single_input(input_ctes)
             for formula in node.formulas:
                 try:
                     expr = self._translator.translate_string(formula.expression)
                 except (BaseTranslationError, ParserError):
-                    expr = formula.expression
+                    expr = f"NULL /* TODO: {formula.expression} */"
                     warnings.append(f"SQL formula fallback: {formula.output_field}")
-                extras.append(f"{expr} AS `{formula.output_field}`")
-            extra_str = ", ".join(extras)
-            return f"SELECT *, {extra_str} FROM {inp}", warnings
+                result = f"SELECT *, {expr} AS `{formula.output_field}` FROM ({result})"
+            return result, warnings
 
         if isinstance(node, SelectNode):
             inp = self._get_single_input(input_ctes)
@@ -619,10 +619,20 @@ class SQLGenerator(CodeGenerator):
             return f"SELECT {agg} FROM {inp}", warnings
 
         if isinstance(node, DynamicInputNode):
-            fmt = node.file_format or "csv"
-            pattern = node.file_path_pattern or "*.csv"
-            warnings.append(f"DynamicInput (node {node.node_id}): adjust path for Databricks SQL")
-            return f"SELECT * FROM {fmt}.`{pattern}`", warnings
+            connection_hint = node.template_connection or node.file_path_pattern or "unknown"
+            warnings.append(
+                f"DynamicInput (node {node.node_id}): cannot auto-convert to static SQL — use PySpark output"
+            )
+            body = (
+                f"-- TODO: DynamicInput (ModifySQL) cannot be represented as static SQL.\n"
+                f"-- This tool executes parameterized SQL once per row of an input DataFrame,\n"
+                f"-- substituting row values into a SQL template at runtime.\n"
+                f"-- Original source: {connection_hint}\n"
+                f"-- RECOMMENDATION: Use the PySpark output format for this workflow.\n"
+                f"-- If SQL is required, implement the parameterized loop manually.\n"
+                f"SELECT NULL AS _dynamicinput_placeholder  -- replace with manual implementation"
+            )
+            return body, warnings
 
         if isinstance(node, DynamicOutputNode):
             inp = self._get_single_input(input_ctes)

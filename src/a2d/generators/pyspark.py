@@ -111,6 +111,9 @@ from a2d.ir.nodes import (
 
 logger = logging.getLogger("a2d.generators.pyspark")
 
+# Matches ISO date strings used as DynamicInput SQL placeholders, e.g. "2023-01-01"
+_ISO_DATE_PLACEHOLDER_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
 
 # ---------------------------------------------------------------------------
 # PySpark Generator
@@ -419,6 +422,20 @@ class PySparkGenerator(CodeGenerator):
                     f'{inp}.write.mode("{mode}").saveAsTable("{catalog}.{schema}.{table}")',
                 ]
                 warnings.append(f"Output node {node.node_id}: '{fmt}' format replaced with Delta table")
+            elif node.file_format in ("xlsx", "xls"):
+                # Excel write is not natively supported in Databricks — emit a TODO with options
+                base_path = path.split("|||")[0] if "|||" in path else path
+                sheet_part = path.split("|||", 1)[1].strip() if "|||" in path else ""
+                sheet_hint = f" (Sheet: {sheet_part})" if sheet_part else ""
+                lines = [
+                    "# TODO: Excel write not supported natively in Databricks.",
+                    f"# Original path: {base_path}{sheet_hint}",
+                    "# Option 1 — write as CSV instead:",
+                    f'# {inp}.write.format("csv").option("header", "true").mode("{mode}").save("# TODO: /Volumes/catalog/schema/volume/filename.csv")',
+                    "# Option 2 — use com.crealytics.spark.excel library if installed on the cluster:",
+                    f"# {inp}.write.format(\"com.crealytics.spark.excel\").option(\"header\", \"true\").option(\"dataAddress\", \"'A1'\").mode(\"{mode}\").save(\"# TODO: /Volumes/catalog/schema/volume/filename.xlsx\")",
+                ]
+                warnings.append(f"Output node {node.node_id}: Excel write not supported — manual conversion required")
             else:
                 escaped_path = self._esc(path)
                 if path.startswith("\\\\") or (path.startswith("\\") and len(path) > 1 and path[1] != "\\"):
@@ -426,7 +443,7 @@ class PySparkGenerator(CodeGenerator):
                         "# WARNING: local/network path detected — not accessible from Databricks.",
                         "# Update the path below to a DBFS path or Unity Catalog Volume.",
                         f"# Original path: {path}",
-                        f'{inp}.write.format("{fmt}").mode("{mode}").save("{escaped_path}")',
+                        f'{inp}.write.format("{fmt}").mode("{mode}").save("# TODO: /Volumes/catalog/schema/volume/filename")',
                     ]
                     warnings.append(f"Output node {node.node_id}: path '{path}' is a local/UNC path — needs migration to cloud storage")
                 else:
@@ -1472,6 +1489,13 @@ class PySparkGenerator(CodeGenerator):
             # in the SQL template and execute via spark.sql(), then union results.
             normalized_template, _sql_warns = normalize_sql_for_spark(node.template_query)
             escaped_sql = normalized_template.replace('"""', '\\"\\"\\"')
+            # Detect which modifications use ISO date placeholders
+            iso_date_mods = {
+                mod["field"]
+                for mod in node.modifications
+                if _ISO_DATE_PLACEHOLDER_RE.match(mod["replace_text"].strip())
+            }
+
             lines: list[str] = [
                 f"# DynamicInput (ModifySQL): executes parameterized SQL once per row of {inp}",
                 f"# Source connection: {node.template_connection}",
@@ -1479,6 +1503,27 @@ class PySparkGenerator(CodeGenerator):
                 '#   spark.table("catalog.schema.table_name")                       # UC managed/external table',
                 '#   spark.sql("SELECT ... FROM catalog.schema.table_name")         # keep SQL, update table ref',
                 '#   spark.read.format("jdbc").option("url","jdbc:...").option("dbtable","schema.table").load()  # JDBC',
+            ]
+
+            # Emit ISO date normalization helper if any placeholder is an ISO date
+            if iso_date_mods:
+                nid = node.node_id
+                lines += [
+                    f"def _to_iso_date_{nid}(val):",
+                    f'    """Normalize val to ISO date string yyyy-MM-dd for SQL replacement."""',
+                    f"    if val is None: return 'NULL'",
+                    f"    s = str(val)",
+                    f"    if len(s) == 10 and s[4:5] == '-' and s[7:8] == '-': return s  # already ISO",
+                    f"    from datetime import datetime",
+                    f"    for _fmt in ('%d-%b-%Y', '%b-%d-%Y', '%m/%d/%Y', '%d/%m/%Y', '%Y%m%d'):",
+                    f"        try:",
+                    f"            return datetime.strptime(s, _fmt).strftime('%Y-%m-%d')",
+                    f"        except ValueError:",
+                    f"            pass",
+                    f"    return s",
+                ]
+
+            lines += [
                 f"_rows_{node.node_id} = {inp}.collect()",
                 f"_dfs_{node.node_id} = []",
                 f"for _row in _rows_{node.node_id}:",
@@ -1487,12 +1532,18 @@ class PySparkGenerator(CodeGenerator):
             for mod in node.modifications:
                 f_name = mod["field"]
                 placeholder = mod["replace_text"]
-                lines.append(
-                    f'    _sql_{node.node_id} = _sql_{node.node_id}.replace("{placeholder}", str(_row["{f_name}"]))'
-                )
+                if _ISO_DATE_PLACEHOLDER_RE.match(placeholder.strip()):
+                    lines.append(
+                        f'    _sql_{node.node_id} = _sql_{node.node_id}.replace("{placeholder}", _to_iso_date_{node.node_id}(_row["{f_name}"]))'
+                    )
+                else:
+                    lines.append(
+                        f'    _sql_{node.node_id} = _sql_{node.node_id}.replace("{placeholder}", str(_row["{f_name}"]))'
+                    )
             lines += [
                 f"    _dfs_{node.node_id}.append(spark.sql(_sql_{node.node_id}))",
-                f"{out_var} = _dfs_{node.node_id}[0] if _dfs_{node.node_id} else spark.createDataFrame([], schema=None)",
+                f"from pyspark.sql.types import StructType",
+                f"{out_var} = _dfs_{node.node_id}[0] if _dfs_{node.node_id} else spark.createDataFrame([], StructType([]))",
                 f"for _df in _dfs_{node.node_id}[1:]:",
                 f"    {out_var} = {out_var}.unionByName(_df, allowMissingColumns=True)",
             ]

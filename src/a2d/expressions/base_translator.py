@@ -14,6 +14,7 @@ from a2d.expressions.ast import (
     ComparisonOp,
     Expr,
     FieldRef,
+    FunctionCall,
     IfExpr,
     InExpr,
     Literal,
@@ -27,6 +28,17 @@ from a2d.expressions.parser import ExpressionParser
 
 # Re-export for backwards compatibility — existing code imports from here.
 __all__ = ["BaseExpressionTranslator", "BaseTranslationError"]
+
+# Functions whose return type is always string — used to detect string + concatenation
+_STRING_PRODUCING_FUNCTIONS: frozenset[str] = frozenset({
+    "datetimeformat", "tostring", "converttostring",
+    "trim", "ltrim", "rtrim",
+    "padleft", "padright",
+    "substring", "mid", "left", "right",
+    "uppercase", "lowercase", "titlecase", "toupper", "tolower",
+    "replace", "findstring", "reversestring", "stringelement",
+    "regexreplace", "regexextract",
+})
 
 
 class BaseExpressionTranslator(ABC):
@@ -71,6 +83,18 @@ class BaseExpressionTranslator(ABC):
     @abstractmethod
     def _make_error(self, message: str) -> Exception:
         """Create a format-specific translation error."""
+
+    # -- String-type detection -----------------------------------------------
+
+    def _is_string_expr(self, node: Expr) -> bool:
+        """Return True if node statically produces a string value."""
+        if isinstance(node, Literal):
+            return node.literal_type == "string"
+        if isinstance(node, FunctionCall):
+            return node.function_name.lower() in _STRING_PRODUCING_FUNCTIONS
+        if isinstance(node, BinaryOp) and node.operator == "+":
+            return self._is_string_expr(node.left) or self._is_string_expr(node.right)
+        return False
 
     # -- Shared structural visitors -----------------------------------------
 

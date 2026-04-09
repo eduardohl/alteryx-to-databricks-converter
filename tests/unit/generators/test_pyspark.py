@@ -875,3 +875,157 @@ class TestDateTimeNodeNowMode:
         assert "run_timestamp" in content
         # Should NOT be a passthrough
         assert 'F.col("some_field")' not in content
+
+
+class TestWriteNodeOutputFixes:
+    """Tests for Excel write and UNC path handling in WriteNode generation."""
+
+    def test_write_xlsx_emits_todo_not_format_call(self, generator: PySparkGenerator):
+        """Excel output should emit a TODO block, not a broken .write.format('xlsx') call."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/in.csv", file_format="csv")
+        write = WriteNode(
+            node_id=2,
+            original_tool_type="Output Data",
+            file_path=r"\\server\share\output.xlsx|||Sheet1",
+            file_format="xlsx",
+        )
+        dag = _make_dag_with_node(write, predecessors=[read])
+        dag.add_edge(1, 2)
+        output = generator.generate(dag)
+        content = output.files[0].content
+        assert "# TODO: Excel write not supported natively in Databricks." in content
+        assert ".write.format(\"xlsx\")" not in content
+        assert ".write.format(\"xlsx|||" not in content
+        assert "Sheet1" in content  # sheet name preserved in comment
+
+    def test_write_unc_path_uses_todo_placeholder(self, generator: PySparkGenerator):
+        """UNC path output should have a TODO placeholder in .save(), not the original UNC path."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/in.csv", file_format="csv")
+        write = WriteNode(
+            node_id=2,
+            original_tool_type="Output Data",
+            file_path=r"\\nasserver\share\output.csv",
+            file_format="csv",
+        )
+        dag = _make_dag_with_node(write, predecessors=[read])
+        dag.add_edge(1, 2)
+        output = generator.generate(dag)
+        content = output.files[0].content
+        assert "# WARNING: local/network path detected" in content
+        assert "# Original path:" in content
+        # The .save() call must NOT contain the raw UNC path
+        assert '.save("\\\\nasserver' not in content
+        assert '.save("# TODO:' in content
+
+
+class TestDynamicInputDateWarning:
+    """Tests for ISO date placeholder warning in DynamicInput ModifySQL generation."""
+
+    def test_dynamic_input_iso_date_placeholder_emits_normalization_helper(self, generator: PySparkGenerator):
+        """DynamicInput with ISO date placeholders should emit the _to_iso_date helper function."""
+        from a2d.ir.nodes import DynamicInputNode
+
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/in.csv", file_format="csv")
+        dyn = DynamicInputNode(
+            node_id=2,
+            original_tool_type="DynamicInput",
+            mode="ModifySQL",
+            template_query="SELECT * FROM t WHERE dt = '2023-01-01'",
+            template_connection="aka:some-connection",
+            modifications=[{"field": "ReportDate", "replace_text": "2023-01-01"}],
+        )
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(dyn)
+        dag.add_edge(1, 2)
+        output = generator.generate(dag)
+        content = output.files[0].content
+        assert "def _to_iso_date_2" in content
+        assert "strptime" in content
+        assert '_to_iso_date_2(_row["ReportDate"])' in content
+
+    def test_dynamic_input_non_date_placeholder_no_note(self, generator: PySparkGenerator):
+        """DynamicInput with non-date placeholders should NOT emit the ISO date NOTE."""
+        from a2d.ir.nodes import DynamicInputNode
+
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/in.csv", file_format="csv")
+        dyn = DynamicInputNode(
+            node_id=2,
+            original_tool_type="DynamicInput",
+            mode="ModifySQL",
+            template_query="SELECT * FROM t WHERE name = 'ACME'",
+            template_connection="aka:some-connection",
+            modifications=[{"field": "CompanyName", "replace_text": "ACME"}],
+        )
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(dyn)
+        dag.add_edge(1, 2)
+        output = generator.generate(dag)
+        content = output.files[0].content
+        assert "# NOTE: SQL expects ISO date format" not in content
+
+
+class TestDynamicInputDateNormalization:
+    """TDD: RED tests for date normalization helper and StructType fallback fixes."""
+
+    def _make_dyn_iso(self, generator, modifications):
+        from a2d.ir.nodes import DynamicInputNode
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/in.csv", file_format="csv")
+        dyn = DynamicInputNode(
+            node_id=6,
+            original_tool_type="DynamicInput",
+            mode="ModifySQL",
+            template_query="SELECT * FROM t WHERE dt1 = '2023-01-01' AND dt2 = '2023-01-02'",
+            template_connection="aka:conn",
+            modifications=modifications,
+        )
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(dyn)
+        dag.add_edge(1, 6)
+        return generator.generate(dag).files[0].content
+
+    def test_r1_iso_placeholder_emits_normalization_helper(self, generator: PySparkGenerator):
+        """R1 (RED): ISO date placeholder → helper function _to_iso_date_6 is defined."""
+        content = self._make_dyn_iso(generator, [
+            {"field": "ReportDate", "replace_text": "2023-01-01"},
+        ])
+        assert "def _to_iso_date_6" in content
+        assert "strptime" in content
+
+    def test_r2_iso_placeholder_replace_uses_helper_not_raw_str(self, generator: PySparkGenerator):
+        """R2 (RED): ISO date placeholder → .replace() uses helper, not raw str(_row[...])."""
+        content = self._make_dyn_iso(generator, [
+            {"field": "ReportDate", "replace_text": "2023-01-01"},
+        ])
+        assert 'str(_row["ReportDate"])' not in content
+        assert '_to_iso_date_6(_row["ReportDate"])' in content
+
+    def test_r3_non_date_placeholder_uses_raw_str_no_helper(self, generator: PySparkGenerator):
+        """R3 (RED): Non-date placeholder → raw str() is used, no helper emitted."""
+        from a2d.ir.nodes import DynamicInputNode
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/in.csv", file_format="csv")
+        dyn = DynamicInputNode(
+            node_id=6,
+            original_tool_type="DynamicInput",
+            mode="ModifySQL",
+            template_query="SELECT * FROM t WHERE name = 'ACME'",
+            template_connection="aka:conn",
+            modifications=[{"field": "CompanyName", "replace_text": "ACME"}],
+        )
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(dyn)
+        dag.add_edge(1, 6)
+        content = generator.generate(dag).files[0].content
+        assert 'str(_row["CompanyName"])' in content
+        assert "def _to_iso_date_6" not in content
+
+    def test_r4_empty_fallback_uses_struct_type_not_schema_none(self, generator: PySparkGenerator):
+        """R4 (RED): Empty DataFrame fallback must use StructType([]), not schema=None."""
+        content = self._make_dyn_iso(generator, [
+            {"field": "ReportDate", "replace_text": "2023-01-01"},
+        ])
+        assert "schema=None" not in content
+        assert "StructType([])" in content

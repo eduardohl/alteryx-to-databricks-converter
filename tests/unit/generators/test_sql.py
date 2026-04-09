@@ -10,7 +10,11 @@ from a2d.ir.graph import WorkflowDAG
 from a2d.ir.nodes import (
     AggAction,
     AggregationField,
+    CommentNode,
+    DynamicInputNode,
     FilterNode,
+    FormulaField,
+    FormulaNode,
     JoinKey,
     JoinNode,
     ReadNode,
@@ -162,3 +166,66 @@ class TestSQLFormat:
         assert "ORDER BY" in content
         assert "`Name` ASC" in content
         assert "`Age` DESC" in content
+
+
+class TestSQLCommentNode:
+    def test_comment_node_multiline_all_lines_prefixed(self, generator: SQLGenerator):
+        """All lines of a multiline CommentNode must start with -- in SQL output."""
+        comment = CommentNode(node_id=1, comment_text="Workflow Name\nCreated by: user\nChangelog:\nv1.0")
+        read = ReadNode(node_id=2, original_tool_type="Input Data", file_path="/d.csv", file_format="csv")
+        dag = WorkflowDAG()
+        dag.add_node(comment)
+        dag.add_node(read)
+        sql = generator.generate(dag, "wf").files[0].content
+        pre_with = sql.split("WITH")[0]
+        for line in pre_with.splitlines():
+            if line.strip():
+                assert line.startswith("--"), f"Unprefixed preamble line: {line!r}"
+
+
+class TestSQLFormulaNode:
+    def test_formula_single_column(self, generator: SQLGenerator):
+        """Single formula produces SELECT *, expr AS col FROM input."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/d.csv", file_format="csv")
+        formula = FormulaNode(node_id=2, original_tool_type="Formula", formulas=[
+            FormulaField(output_field="col1", expression='"hello"'),
+        ])
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(formula)
+        dag.add_edge(1, 2)
+        sql = generator.generate(dag, "wf").files[0].content
+        assert "`col1`" in sql
+        assert "step_2_formula" in sql
+
+    def test_formula_dependent_columns_nested_subquery(self, generator: SQLGenerator):
+        """Multiple formulas where later ones reference earlier ones must use subquery nesting."""
+        read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/d.csv", file_format="csv")
+        formula = FormulaNode(node_id=2, original_tool_type="Formula", formulas=[
+            FormulaField(output_field="col1", expression='"hello"'),
+            FormulaField(output_field="col2", expression='[col1] + "_world"'),
+        ])
+        dag = WorkflowDAG()
+        dag.add_node(read)
+        dag.add_node(formula)
+        dag.add_edge(1, 2)
+        sql = generator.generate(dag, "wf").files[0].content
+        # col2 uses col1, so col1 must be computed in a subquery before col2
+        assert "FROM (SELECT" in sql, "Expected subquery nesting for dependent formula columns"
+
+
+class TestSQLDynamicInput:
+    def test_dynamic_input_emits_todo_with_pyspark_recommendation(self, generator: SQLGenerator):
+        """DynamicInput in SQL must emit a TODO block directing user to PySpark output."""
+        node = DynamicInputNode(
+            node_id=1,
+            original_tool_type="DynamicInput",
+            template_connection="aka:abc123",
+            mode="ModifySQL",
+        )
+        dag = WorkflowDAG()
+        dag.add_node(node)
+        sql = generator.generate(dag, "wf").files[0].content
+        assert "TODO" in sql
+        assert "DynamicInput" in sql
+        assert "PySpark" in sql

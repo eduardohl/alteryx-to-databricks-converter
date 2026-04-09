@@ -7,6 +7,8 @@ Walks an Alteryx expression AST and emits a PySpark ``F.col`` / ``F.when`` /
 from __future__ import annotations
 
 from a2d.expressions.ast import (
+    BinaryOp,
+    Expr,
     FieldRef,
     FunctionCall,
     IfExpr,
@@ -53,6 +55,15 @@ class PySparkTranslator(BaseExpressionTranslator):
     @property
     def _cmp_map(self) -> dict[str, str]:
         return _CMP_MAP
+
+    def _visit_BinaryOp(self, node: BinaryOp) -> str:
+        left = self._visit(node.left)
+        right = self._visit(node.right)
+        if node.operator == "+" and (
+            self._is_string_expr(node.left) or self._is_string_expr(node.right)
+        ):
+            return f"F.concat({left}, {right})"
+        return f"({left} {node.operator} {right})"
 
     # -- Format-specific visitors -------------------------------------------
 

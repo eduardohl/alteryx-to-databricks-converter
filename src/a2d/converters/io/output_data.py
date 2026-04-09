@@ -62,8 +62,9 @@ class OutputDataConverter(ToolConverter):
         connection_string = safe_get_nested(cfg, "Connection")
         table_name = safe_get_nested(cfg, "TableName")
 
-        # Detect format from extension
-        _, ext = os.path.splitext(file_path.lower()) if file_path else ("", "")
+        # Detect format from extension — strip Alteryx "|||SheetName" selector first
+        _clean_fp = file_path.split("|||")[0] if file_path and "|||" in file_path else file_path
+        _, ext = os.path.splitext(_clean_fp.lower()) if _clean_fp else ("", "")
         file_format = _EXT_TO_FORMAT.get(ext, ext.lstrip(".") if ext else "")
         destination_type = "database" if connection_string else "file"
 

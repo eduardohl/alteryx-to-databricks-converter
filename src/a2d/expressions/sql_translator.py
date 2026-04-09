@@ -8,6 +8,7 @@ column-expression code).
 from __future__ import annotations
 
 from a2d.expressions.ast import (
+    BinaryOp,
     FieldRef,
     FunctionCall,
     IfExpr,
@@ -55,6 +56,15 @@ class SparkSQLTranslator(BaseExpressionTranslator):
         return _SQL_CMP_MAP
 
     # -- Format-specific visitors -------------------------------------------
+
+    def _visit_BinaryOp(self, node: BinaryOp) -> str:
+        left = self._visit(node.left)
+        right = self._visit(node.right)
+        if node.operator == "+" and (
+            self._is_string_expr(node.left) or self._is_string_expr(node.right)
+        ):
+            return f"CONCAT({left}, {right})"
+        return f"({left} {node.operator} {right})"
 
     def _visit_FieldRef(self, node: FieldRef) -> str:
         return f"`{node.field_name}`"

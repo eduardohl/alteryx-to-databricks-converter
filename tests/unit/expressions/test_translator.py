@@ -400,6 +400,52 @@ class TestEmptyExpressionGuard:
 # ---------------------------------------------------------------------------
 
 
+class TestBinaryOpStringConcat:
+    """Tests that + on string operands emits F.concat, not arithmetic +."""
+
+    # PySpark tests
+    def test_string_literal_plus_field_emits_concat(self, pyspark_translator: PySparkTranslator) -> None:
+        result = pyspark_translator.translate_string('"prefix_" + [FieldName]')
+        assert "F.concat(" in result
+        assert " + " not in result
+
+    def test_string_function_plus_literal_emits_concat(self, pyspark_translator: PySparkTranslator) -> None:
+        result = pyspark_translator.translate_string('Trim([Name]) + "_suffix"')
+        assert "F.concat(" in result
+        assert " + " not in result
+
+    def test_numeric_plus_stays_arithmetic(self, pyspark_translator: PySparkTranslator) -> None:
+        result = pyspark_translator.translate_string("[Age] + 5")
+        assert " + " in result
+        assert "F.concat" not in result
+
+    def test_field_plus_field_stays_arithmetic(self, pyspark_translator: PySparkTranslator) -> None:
+        result = pyspark_translator.translate_string("[A] + [B]")
+        assert " + " in result
+        assert "F.concat" not in result
+
+    # SQL tests
+    def test_sql_string_literal_plus_field_emits_concat(self, sql_translator: SparkSQLTranslator) -> None:
+        result = sql_translator.translate_string('"prefix_" + [FieldName]')
+        assert "CONCAT(" in result
+        assert " + " not in result
+
+    def test_sql_string_function_plus_literal_emits_concat(self, sql_translator: SparkSQLTranslator) -> None:
+        result = sql_translator.translate_string('Trim([Name]) + "_suffix"')
+        assert "CONCAT(" in result
+        assert " + " not in result
+
+    def test_sql_numeric_plus_stays_arithmetic(self, sql_translator: SparkSQLTranslator) -> None:
+        result = sql_translator.translate_string("[Age] + 5")
+        assert " + " in result
+        assert "CONCAT" not in result
+
+    def test_sql_field_plus_field_stays_arithmetic(self, sql_translator: SparkSQLTranslator) -> None:
+        result = sql_translator.translate_string("[A] + [B]")
+        assert " + " in result
+        assert "CONCAT" not in result
+
+
 class TestPositionFunction:
     """Regression tests for position() — previously unregistered, causing fallback warnings."""
 
