@@ -1,25 +1,29 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Alteryx → Databricks Migration Snippet Library
+# MAGIC # Alteryx → Databricks Migration Snippet Library — Unity Catalog Workspace
 # MAGIC
 # MAGIC This notebook contains copy-paste-ready code snippets for the patterns that the
-# MAGIC **Alteryx-to-Databricks Migration Accelerator** tool cannot convert automatically.
+# MAGIC **Alteryx-to-Databricks Migration Accelerator** tool cannot convert automatically,
+# MAGIC written for **Unity Catalog (UC) enabled** Databricks workspaces.
 # MAGIC
-# MAGIC Each section corresponds to a `# TODO` or `# WARNING` comment you will find in the
-# MAGIC generated notebook. Find the matching section below, copy the relevant cell into your
-# MAGIC migrated notebook, and adapt the catalog/schema/table/path values to your environment.
+# MAGIC **Use this notebook if:** your workspace has Unity Catalog enabled (you can run
+# MAGIC `spark.sql("SHOW CATALOGS")` and see catalogs beyond `hive_metastore`).
+# MAGIC For non-UC workspaces, use `alteryx_migration_snippets_non_uc.py` instead.
+# MAGIC
+# MAGIC Each section corresponds to a `# TODO` or `# WARNING` comment in the generated notebook.
+# MAGIC Find the matching section, copy the relevant cell, and adapt names to your environment.
 # MAGIC
 # MAGIC **Sections:**
-# MAGIC 1. Data Source Connections (`aka:`, ODBC, DSN)
+# MAGIC 1. Data Source Connections (`aka:`, ODBC, DSN → UC tables / JDBC)
 # MAGIC 2. File I/O — Unity Catalog Volumes (replaces UNC/Windows paths)
-# MAGIC 3. Excel Files (read and write)
+# MAGIC 3. Excel Files (read and write via UC Volumes)
 # MAGIC 4. DynamicInput — Parameterized SQL per Row
 # MAGIC 5. Stored Procedures (PostSQL blocks)
 # MAGIC 6. Date & Type Coercion
 # MAGIC 7. HTTP / DownloadTool
 # MAGIC 8. RunCommand → Shell
 # MAGIC 9. Iterative Macros → Python Loops
-# MAGIC 10. Two-Part SQL Table Names → Unity Catalog Three-Part Names
+# MAGIC 10. Two-Part SQL Table Names → UC Three-Part Names
 
 # COMMAND ----------
 
@@ -29,12 +33,14 @@
 # MAGIC **Converter flag:** `# TODO: map to Unity Catalog` on Input tool steps
 # MAGIC
 # MAGIC Alteryx uses named connections (`aka:UUID|||schema.table`), ODBC DSNs, and connection
-# MAGIC strings that are inaccessible in Databricks. Replace them with one of the patterns below.
+# MAGIC strings that are not accessible in Databricks. Replace with one of the patterns below.
+# MAGIC
+# MAGIC **UC table names use three parts: `catalog.schema.table`**
 
 # COMMAND ----------
 
 # 1a. UC managed or external table (most common — use this first)
-# If the source table has already been onboarded to Rahona/Unity Catalog:
+# If the source table has already been onboarded to Unity Catalog / Rahona:
 df = spark.table("catalog_name.schema_name.table_name")
 
 # 1b. Inline SQL query against a UC table
@@ -47,7 +53,7 @@ df = spark.sql("""
 # COMMAND ----------
 
 # 1c. JDBC — source is still in an on-prem/cloud database (not yet in UC)
-# Requires the JDBC driver on the cluster and network access from Databricks.
+# Requires: JDBC driver on cluster + network access + Databricks secret scope for credentials.
 jdbc_url = "jdbc:sqlserver://hostname:1433;databaseName=your_db"
 conn_props = {
     "user": dbutils.secrets.get(scope="your-scope", key="db-user"),
@@ -56,7 +62,7 @@ conn_props = {
 }
 df = spark.read.jdbc(url=jdbc_url, table="schema_name.table_name", properties=conn_props)
 
-# For a filtered read (avoids full table scan):
+# Filtered read (avoids full table scan):
 df = spark.read.jdbc(
     url=jdbc_url,
     table="(SELECT * FROM schema_name.table_name WHERE year_col = 2024) AS t",
@@ -71,13 +77,15 @@ df = spark.read.jdbc(
 # MAGIC **Converter flag:** `# WARNING: local/network path detected` / `# TODO: /Volumes/...`
 # MAGIC
 # MAGIC UNC paths (`\\server\share\...`) and Windows paths (`C:\Users\...`) are not accessible
-# MAGIC from Databricks. Upload files to a Unity Catalog Volume first, then use the Volume path.
+# MAGIC from Databricks. Upload files to a **Unity Catalog Volume** first, then use the Volume path.
 # MAGIC
-# MAGIC **Path mapping pattern:**
+# MAGIC **Path mapping:**
 # MAGIC ```
 # MAGIC \\nasoc01\share\dept\reports\file.csv  →  /Volumes/catalog/schema/volume/reports/file.csv
 # MAGIC C:\Users\analyst\data\input.xlsx       →  /Volumes/catalog/schema/volume/input.xlsx
 # MAGIC ```
+# MAGIC
+# MAGIC Upload files via: Catalog Explorer → Volumes → your volume → Upload to this Volume
 
 # COMMAND ----------
 
@@ -88,7 +96,7 @@ df = (spark.read
     .option("inferSchema", "true")
     .load("/Volumes/catalog/schema/volume/filename.csv"))
 
-# Read multiple CSVs matching a pattern
+# Read multiple CSVs matching a pattern:
 df = (spark.read
     .format("csv")
     .option("header", "true")
@@ -102,7 +110,7 @@ df = spark.read.parquet("/Volumes/catalog/schema/volume/filename.parquet")
 
 # COMMAND ----------
 
-# 2c. Write CSV to UC Volume (single file, no partitioning)
+# 2c. Write CSV to UC Volume (single file output)
 (df.coalesce(1)
     .write
     .format("csv")
@@ -112,13 +120,14 @@ df = spark.read.parquet("/Volumes/catalog/schema/volume/filename.parquet")
 
 # COMMAND ----------
 
-# 2d. Write as Delta table — recommended over CSV for analytical workloads
+# 2d. Write as Delta table — recommended over CSV/Parquet for analytical workloads
+# Overwrite:
 df.write.format("delta").mode("overwrite").saveAsTable("catalog.schema.table_name")
 
-# Append mode:
+# Append:
 df.write.format("delta").mode("append").saveAsTable("catalog.schema.table_name")
 
-# With schema evolution (safe for adding new columns):
+# Append with schema evolution (safe when adding new columns):
 (df.write
     .format("delta")
     .mode("append")
@@ -133,17 +142,18 @@ df.write.format("delta").mode("append").saveAsTable("catalog.schema.table_name")
 # MAGIC **Converter flag:** `# TODO: Excel write not supported natively in Databricks`
 # MAGIC
 # MAGIC Databricks does not have a built-in Excel reader/writer. Use pandas for small files
-# MAGIC or the `com.crealytics.spark.excel` library for large ones (requires cluster install).
+# MAGIC (the pandas path `/Volumes/...` works directly on the driver node in UC workspaces)
+# MAGIC or `com.crealytics.spark.excel` for large files (requires cluster library install).
 
 # COMMAND ----------
 
-# 3a. Read Excel from UC Volume via pandas (small-to-medium files)
+# 3a. Read Excel from UC Volume via pandas
 import pandas as pd
 
 pdf = pd.read_excel(
     "/Volumes/catalog/schema/volume/file.xlsx",
     sheet_name="Sheet1",   # or sheet index 0
-    dtype=str,             # read all as string first, then cast in Spark
+    dtype=str,             # read all as string first, then cast types in Spark
 )
 df = spark.createDataFrame(pdf)
 
@@ -159,8 +169,8 @@ pdf.to_excel(
 
 # COMMAND ----------
 
-# 3c. Read/write Excel with com.crealytics library (if installed on cluster)
-# Install: Maven coordinate com.crealytics:spark-excel_2.12:3.4.1_0.20.3
+# 3c. Read/write Excel with com.crealytics library (large files — requires cluster install)
+# Maven: com.crealytics:spark-excel_2.12:3.4.1_0.20.3
 
 # Read:
 df = (spark.read
@@ -185,14 +195,11 @@ df = (spark.read
 # MAGIC
 # MAGIC **Converter flag:** `# TODO: DynamicInput (ModifySQL) cannot be represented as static SQL`
 # MAGIC
-# MAGIC The DynamicInput tool in ModifySQL mode executes a SQL template once per row of an
-# MAGIC input DataFrame, substituting field values into the SQL at runtime.
+# MAGIC DynamicInput in ModifySQL mode executes a SQL template once per row of an input DataFrame,
+# MAGIC substituting field values into the SQL at runtime. The PySpark output handles this
+# MAGIC automatically — **use PySpark output for workflows containing DynamicInput**.
 # MAGIC
-# MAGIC The PySpark output format handles this automatically. The SQL output format cannot —
-# MAGIC **use PySpark output for workflows containing DynamicInput.**
-# MAGIC
-# MAGIC The pattern below shows the full working implementation (identical to what the converter
-# MAGIC emits in PySpark mode). Adapt the SQL template and field names to your workflow.
+# MAGIC In UC workspaces, update all `FROM`/`JOIN` table references to three-part UC names.
 
 # COMMAND ----------
 
@@ -203,8 +210,8 @@ from pyspark.sql.types import StructType
 def _to_iso_date(val):
     """Normalize a date value to ISO yyyy-MM-dd string for SQL substitution.
 
-    Handles common date formats produced by Alteryx DateTimeFormat:
-    dd-MMM-yyyy (e.g. 08-Apr-2026), mm/dd/yyyy, yyyymmdd, and ISO (pass-through).
+    Handles common formats produced by Alteryx DateTimeFormat:
+    dd-MMM-yyyy (e.g. 08-Apr-2026), mm/dd/yyyy, yyyymmdd, ISO (pass-through).
     """
     if val is None:
         return "NULL"
@@ -223,7 +230,7 @@ def _to_iso_date(val):
 # -- Adapt these to your workflow -----------------------------------------------
 _sql_template = """
     SELECT *
-    FROM catalog.schema.source_table
+    FROM your_catalog.schema_name.source_table     -- UC three-part name
     WHERE report_date = '2024-01-01'
       AND region = 'PLACEHOLDER_REGION'
 """
@@ -233,10 +240,8 @@ _dfs = []
 
 for _row in _rows:
     _sql = _sql_template
-    # Date placeholders: use _to_iso_date() to normalize from any Alteryx date format
-    _sql = _sql.replace("2024-01-01", _to_iso_date(_row["ReportDate"]))
-    # String placeholders: use str() directly
-    _sql = _sql.replace("PLACEHOLDER_REGION", str(_row["Region"]))
+    _sql = _sql.replace("2024-01-01", _to_iso_date(_row["ReportDate"]))   # date placeholder
+    _sql = _sql.replace("PLACEHOLDER_REGION", str(_row["Region"]))        # string placeholder
     _dfs.append(spark.sql(_sql))
 
 df_result = _dfs[0] if _dfs else spark.createDataFrame([], StructType([]))
@@ -248,13 +253,12 @@ for _df in _dfs[1:]:
 # MAGIC %md
 # MAGIC ## Section 5 — Stored Procedures (PostSQL)
 # MAGIC
-# MAGIC **Converter flag:** PostSQL blocks are not extracted from workflow XML (no TODO emitted
-# MAGIC — they are silently skipped). Check your original Alteryx workflow for any PostSQL
-# MAGIC tools and implement the equivalent logic using one of the patterns below.
+# MAGIC **Converter flag:** PostSQL blocks are silently skipped — no TODO is emitted.
+# MAGIC Check your original Alteryx workflow for PostSQL tools and implement the equivalent.
 
 # COMMAND ----------
 
-# 5a. Call a stored procedure via JDBC and read the result set
+# 5a. Call a stored procedure via JDBC and capture the result set
 jdbc_url = "jdbc:sqlserver://hostname:1433;databaseName=your_db"
 conn_props = {
     "user": dbutils.secrets.get(scope="your-scope", key="db-user"),
@@ -269,14 +273,11 @@ df_sp_result = spark.read.jdbc(
 
 # COMMAND ----------
 
-# 5b. Rewrite SP insert/update logic as Databricks SQL (preferred — runs in UC)
+# 5b. Rewrite SP insert/update logic as Databricks SQL (preferred — native UC)
 spark.sql("""
-    INSERT INTO catalog.schema.target_table
-    SELECT
-        col1,
-        col2,
-        CURRENT_DATE() AS load_date
-    FROM catalog.schema.source_table
+    INSERT INTO your_catalog.schema_name.target_table
+    SELECT col1, col2, CURRENT_DATE() AS load_date
+    FROM your_catalog.schema_name.source_table
     WHERE status = 'PENDING'
 """)
 
@@ -290,7 +291,7 @@ df_transformed = (df_source
     .withColumn("load_date", F.current_date())
     .select("col1", "col2", "load_date"))
 
-df_transformed.write.format("delta").mode("append").saveAsTable("catalog.schema.target_table")
+df_transformed.write.format("delta").mode("append").saveAsTable("your_catalog.schema_name.target_table")
 
 # COMMAND ----------
 
@@ -298,19 +299,18 @@ df_transformed.write.format("delta").mode("append").saveAsTable("catalog.schema.
 # MAGIC ## Section 6 — Date & Type Coercion
 # MAGIC
 # MAGIC **Converter flag:** Type mismatches in `IF/THEN` expressions involving DateType columns.
-# MAGIC These cannot be auto-fixed without schema information. The two most common patterns
-# MAGIC found in TD workflows are shown below.
+# MAGIC These require manual fixes — the converter cannot resolve them without schema information.
 
 # COMMAND ----------
 
 from pyspark.sql import functions as F
 
-# 6a. "Is today?" check — DateType column vs formatted string (always returns false)
+# 6a. "Is today?" — DateType column vs formatted string (converter output is always false)
 #
-# BEFORE (converter output — wrong, string vs DateType):
+# BEFORE (wrong — string vs DateType comparison):
 #   F.when(F.date_format(F.current_timestamp(), "yyyy-MM-dd") == F.col("DateType"), ...)
 #
-# AFTER — compare DateType to DateType:
+# AFTER — compare DateType to DateType directly:
 df = df.withColumn(
     "DateCheck",
     F.when(F.current_date() == F.col("DateType"), F.col("DateType"))
@@ -319,19 +319,18 @@ df = df.withColumn(
 
 # COMMAND ----------
 
-# 6b. String sentinel "0" in ELSE branch of a DateType WHEN
+# 6b. String sentinel "0" in ELSE of a DateType WHEN (type mismatch)
 #
-# BEFORE (converter output — type mismatch, "0" is StringType):
-#   F.when(condition, F.col("DateType")).otherwise(F.lit("0"))
+# BEFORE: F.when(condition, F.col("DateType")).otherwise(F.lit("0"))
 #
-# Option A — use null as the "no date" sentinel (cleanest):
+# Option A — null as sentinel (cleanest):
 df = df.withColumn(
     "DateCheck",
     F.when(F.current_date() == F.col("DateType"), F.col("DateType"))
      .otherwise(F.lit(None).cast("date"))
 )
 
-# Option B — keep "0" sentinel, cast DateType to string in THEN branch:
+# Option B — keep "0" sentinel by casting the DateType branch to string:
 df = df.withColumn(
     "DateCheck",
     F.when(F.current_date() == F.col("DateType"), F.col("DateType").cast("string"))
@@ -341,27 +340,21 @@ df = df.withColumn(
 # COMMAND ----------
 
 # 6c. DateTimeNow() — timestamp vs date
-#
-# Alteryx DateTimeNow() translates to F.current_timestamp() (TimestampType).
-# If your logic only needs the date portion, replace with F.current_date():
-
-df = df.withColumn("today", F.current_date())                          # DateType
-df = df.withColumn("now_ts", F.current_timestamp())                    # TimestampType
-df = df.withColumn("today_str", F.date_format(F.current_date(), "yyyy-MM-dd"))  # StringType
+# Alteryx DateTimeNow() → F.current_timestamp() (TimestampType).
+# Use F.current_date() when only the date is needed:
+df = df.withColumn("today", F.current_date())                                     # DateType
+df = df.withColumn("now_ts", F.current_timestamp())                               # TimestampType
+df = df.withColumn("today_str", F.date_format(F.current_date(), "yyyy-MM-dd"))   # StringType
 
 # COMMAND ----------
 
 # 6d. Concatenating a DateType column with strings
-#
-# DateType columns must be cast to string before F.concat():
-from pyspark.sql import functions as F
-
-# Cast to string, then concat:
+# DateType must be cast to string before F.concat():
 df = df.withColumn(
     "FilePath",
     F.concat(
         F.lit("/Volumes/catalog/schema/volume/report_"),
-        F.date_format(F.col("DateType"), "yyyyMMdd"),   # "20240408"
+        F.date_format(F.col("DateType"), "yyyyMMdd"),   # → "20240408"
         F.lit(".csv")
     )
 )
@@ -373,8 +366,8 @@ df = df.withColumn(
 # MAGIC
 # MAGIC **Converter flag:** `# TODO: Replace with requests/urllib UDF or Databricks external access`
 # MAGIC
-# MAGIC Requires: External network access enabled for the target host in your Databricks workspace.
-# MAGIC Contact your workspace admin to allowlist the required URLs.
+# MAGIC Requires: External network access allowlisted for the target host in your UC workspace.
+# MAGIC In UC workspaces this is configured via **Network Policies** — contact your workspace admin.
 
 # COMMAND ----------
 
@@ -386,7 +379,7 @@ from pyspark.sql import functions as F
 
 @pandas_udf("string")
 def fetch_url(urls: pd.Series) -> pd.Series:
-    """Fetch the response body for each URL in the column. Returns error string on failure."""
+    """Fetch the HTTP response body for each URL. Returns an error string on failure."""
     def get(url):
         try:
             resp = requests.get(url, timeout=30)
@@ -397,7 +390,6 @@ def fetch_url(urls: pd.Series) -> pd.Series:
     return urls.apply(get)
 
 
-# Apply to a DataFrame column containing URLs:
 df_with_response = df.withColumn("response_body", fetch_url(F.col("url_column")))
 
 # COMMAND ----------
@@ -409,12 +401,11 @@ df_with_response = df.withColumn("response_body", fetch_url(F.col("url_column"))
 
 # COMMAND ----------
 
-# Option 1: %sh magic cell — interactive notebooks only, not supported in Jobs
-# Uncomment the cell below and adapt the command:
+# Option 1: %sh magic — interactive notebooks only (not in Jobs)
 # %sh
 # cp /Volumes/catalog/schema/volume/input.csv /tmp/staging/input.csv
 
-# Option 2: subprocess — works in both interactive and job contexts
+# Option 2: subprocess — works in Jobs too
 import subprocess
 
 result = subprocess.run(
@@ -425,7 +416,7 @@ result = subprocess.run(
 if result.returncode != 0:
     raise RuntimeError(f"Shell command failed:\n{result.stderr}")
 
-# Option 3: dbutils for common file operations within Volumes/DBFS
+# Option 3: dbutils.fs for Volume/DBFS file operations
 dbutils.fs.cp(
     "dbfs:/Volumes/catalog/schema/volume/input.csv",
     "dbfs:/tmp/staging/input.csv",
@@ -436,33 +427,24 @@ dbutils.fs.cp(
 # MAGIC %md
 # MAGIC ## Section 9 — Iterative Macros → Python Loops
 # MAGIC
-# MAGIC **Converter flag:** Iterative macros are flagged as unsupported; no code is generated.
-# MAGIC
-# MAGIC Alteryx iterative macros run a sub-workflow repeatedly until a stopping condition is met.
-# MAGIC The equivalent pattern in PySpark is a Python `while` loop that transforms a DataFrame
-# MAGIC until the termination condition is satisfied.
+# MAGIC **Converter flag:** Iterative macros are unsupported — no code is generated.
+# MAGIC Implement the loop logic manually using a Python `for`/`while` loop.
 
 # COMMAND ----------
 
 from pyspark.sql import functions as F
 
-# Pattern: process rows until none remain that need further action
 max_iterations = 100
-df_current = df_seed  # starting point — adapt to your workflow
+df_current = df_seed  # adapt to your starting DataFrame
 
 for iteration in range(max_iterations):
-    # Apply the iterative transformation (adapt to your business logic)
     df_next = (df_current
         .withColumn("status", F.when(F.col("value") > 100, F.lit("DONE")).otherwise(F.col("status")))
-        .withColumn("value", F.col("value") * 1.1)   # example: compound growth
+        .withColumn("value", F.col("value") * 1.1)
     )
-
-    # Stopping condition: no more rows need processing
-    remaining = df_next.filter(F.col("status") != "DONE").count()
-    if remaining == 0:
+    if df_next.filter(F.col("status") != "DONE").count() == 0:
         print(f"Converged after {iteration + 1} iterations")
         break
-
     df_current = df_next
 else:
     print(f"Warning: reached max_iterations ({max_iterations}) without converging")
@@ -472,13 +454,12 @@ df_result = df_current
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Section 10 — Two-Part SQL Table Names in DynamicInput SQL Templates
+# MAGIC ## Section 10 — Two-Part SQL Table Names → UC Three-Part Names
 # MAGIC
-# MAGIC **Converter flag:** SQL templates inside DynamicInput use two-part names (`SCHEMA.TABLE`)
-# MAGIC which are invalid in Unity Catalog (requires three-part: `CATALOG.SCHEMA.TABLE`).
+# MAGIC **Converter flag:** DynamicInput SQL templates use two-part names (`SCHEMA.TABLE`)
+# MAGIC which fail in Unity Catalog — three-part names are required (`CATALOG.SCHEMA.TABLE`).
 # MAGIC
-# MAGIC Update your SQL template strings in the generated notebook — find all `FROM` and `JOIN`
-# MAGIC clauses and add the catalog prefix.
+# MAGIC Update all `FROM` and `JOIN` table references in the generated SQL template strings.
 
 # COMMAND ----------
 
@@ -486,12 +467,14 @@ df_result = df_current
 #   BEFORE: FROM RRDW_DLV.V_DLV_DEP_AGMT A
 #   AFTER:  FROM your_catalog.RRDW_DLV.V_DLV_DEP_AGMT A
 
-# To discover which catalog a table belongs to in your workspace:
+# Discover available catalogs:
 spark.sql("SHOW CATALOGS").show()
+
+# Find a table in a known schema:
 spark.sql("SHOW TABLES IN RRDW_DLV").show()
 
-# To verify a specific table exists and inspect its metadata:
+# Inspect a specific table:
 spark.sql("DESCRIBE TABLE EXTENDED your_catalog.RRDW_DLV.V_DLV_DEP_AGMT").show(truncate=False)
 
-# Quick check — if the table is accessible:
+# Quick access check:
 spark.table("your_catalog.RRDW_DLV.V_DLV_DEP_AGMT").limit(1).display()
