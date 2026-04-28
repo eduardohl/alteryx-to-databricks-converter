@@ -70,19 +70,41 @@ jobs:
       - working-directory: frontend
         run: npm run build
 
-  bundle-validate:
+  bundle-yaml:
+    # `databricks bundle validate` requires a real DATABRICKS_HOST + token
+    # because it calls `/api/2.0/preview/scim/v2/Me` even just to validate
+    # YAML — it cannot run in CI without live workspace creds. Instead we
+    # do the things we CAN do without auth: parse `databricks.yml` and
+    # `app.yaml` as valid YAML, and check that key required keys exist.
+    # Real semantic validation happens at deploy time via
+    # `make deploy-dev` / `make deploy-prod`, which run against the
+    # operator's actual DATABRICKS_HOST.
     runs-on: ubuntu-latest
-    # `databricks bundle validate` tries to hit `/api/2.0/preview/scim/v2/Me`
-    # against the configured DATABRICKS_HOST — it cannot fully validate
-    # without real credentials + a real workspace. We still run it so any
-    # YAML-shape regressions show up as warnings, but we don't block the
-    # build on it. Real validation happens at deploy time via
-    # `make deploy-dev` / `make deploy-prod`.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: databricks/setup-cli@main
-      - run: databricks bundle validate
-        env:
-          DATABRICKS_HOST: https://example.cloud.databricks.com
-          DATABRICKS_TOKEN: dapi-placeholder-for-ci-validation-only
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      - name: Validate databricks.yml + app.yaml structure
+        run: |
+          python - <<'PY'
+          import sys, yaml, pathlib
+          ok = True
+          for f, required in [
+              ("databricks.yml", ["bundle", "resources", "targets"]),
+              ("app.yaml", ["env"]),
+          ]:
+              p = pathlib.Path(f)
+              if not p.exists():
+                  print(f"::error file={f}::missing"); ok = False; continue
+              try:
+                  data = yaml.safe_load(p.read_text())
+              except Exception as e:
+                  print(f"::error file={f}::not valid YAML: {e}"); ok = False; continue
+              for key in required:
+                  if not isinstance(data, dict) or key not in data:
+                      print(f"::error file={f}::missing required key '{key}'"); ok = False
+              print(f"  ✓ {f}: {len(data) if isinstance(data, dict) else 0} top-level keys")
+          sys.exit(0 if ok else 1)
+          PY
