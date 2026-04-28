@@ -12,12 +12,10 @@ interface ToastStore {
   dismiss: (id: string) => void;
 }
 
-let counter = 0;
-
 export const useToastStore = create<ToastStore>((set) => ({
   toasts: [],
   add: (message, type = "info") => {
-    const id = String(++counter);
+    const id = crypto.randomUUID();
     set((s) => {
       const next = [...s.toasts, { id, message, type }];
       // Keep at most 5 visible toasts — drop oldest when over limit

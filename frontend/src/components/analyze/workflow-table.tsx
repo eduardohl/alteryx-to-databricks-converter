@@ -11,10 +11,10 @@ interface WorkflowTableProps {
   workflows: WorkflowAnalysis[];
 }
 
-const priorityVariant = {
-  High: "success" as const,
-  Medium: "warning" as const,
-  Low: "destructive" as const,
+const priorityVariant: Record<string, "success" | "warning" | "destructive" | "secondary"> = {
+  High: "success",
+  Medium: "warning",
+  Low: "destructive",
 };
 
 type SortKey = "workflow_name" | "node_count" | "coverage_percentage" | "complexity_score" | "migration_priority";
@@ -100,12 +100,12 @@ export function WorkflowTable({ workflows }: WorkflowTableProps) {
                   {w.complexity_score.toFixed(1)} ({w.complexity_level})
                 </td>
                 <td className="px-4 py-3 text-center">
-                  <Badge variant={priorityVariant[w.migration_priority as keyof typeof priorityVariant] ?? "secondary"}>
+                  <Badge variant={priorityVariant[w.migration_priority] ?? "secondary"}>
                     {w.migration_priority}
                   </Badge>
                 </td>
                 <td className="px-4 py-3 text-center">
-                  <Badge variant={priorityVariant[w.estimated_effort as keyof typeof priorityVariant] ?? "secondary"}>
+                  <Badge variant={priorityVariant[w.estimated_effort] ?? "secondary"}>
                     {w.estimated_effort}
                   </Badge>
                 </td>
@@ -142,9 +142,10 @@ function SortHeader({
   align: "left" | "right" | "center";
 }) {
   const active = current === sortKey;
+  const alignClass = { left: "text-left", right: "text-right", center: "text-center" }[align];
   return (
     <th
-      className={`px-4 py-3 font-medium text-[var(--fg-muted)] cursor-pointer hover:text-[var(--fg)] select-none text-${align}`}
+      className={`px-4 py-3 font-medium text-[var(--fg-muted)] cursor-pointer hover:text-[var(--fg)] select-none ${alignClass}`}
       onClick={() => onSort(sortKey)}
     >
       <span className="inline-flex items-center gap-1">

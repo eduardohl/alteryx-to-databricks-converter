@@ -13,7 +13,7 @@ from server.settings import settings
 def sanitize_filename(filename: str) -> str:
     """Strip directory components and dangerous characters from a filename."""
     name = PurePosixPath(filename).name
-    name = re.sub(r'[^\w\-.]', '_', name)
+    name = re.sub(r"[^\w\-.]", "_", name)
     return name or "upload.yxmd"
 
 

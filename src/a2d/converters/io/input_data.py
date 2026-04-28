@@ -63,11 +63,7 @@ class InputDataConverter(ToolConverter):
         file_info = cfg.get("File", "")
         file_path = ""
         if isinstance(file_info, dict):
-            file_path = (
-                file_info.get("@FilePath", "")
-                or file_info.get("FilePath", "")
-                or file_info.get("#text", "")
-            )
+            file_path = file_info.get("@FilePath", "") or file_info.get("FilePath", "") or file_info.get("#text", "")
         else:
             file_path = str(file_info) if file_info else ""
         if not file_path:

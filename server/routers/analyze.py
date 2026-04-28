@@ -11,7 +11,7 @@ from server.models.responses import AnalysisResponse
 from server.services.analysis import analyze_files
 from server.utils.validation import validate_and_read_files
 
-logger = logging.getLogger("a2d.server.analyze")
+logger = logging.getLogger("a2d.server.routers.analyze")
 
 router = APIRouter(prefix="/api", tags=["analyze"])
 

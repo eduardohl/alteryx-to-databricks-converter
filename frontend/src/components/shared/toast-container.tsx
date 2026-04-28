@@ -9,7 +9,8 @@ const icons = {
 };
 
 export function ToastContainer() {
-  const { toasts, dismiss } = useToastStore();
+  const toasts = useToastStore((s) => s.toasts);
+  const dismiss = useToastStore((s) => s.dismiss);
 
   return (
     <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm" aria-live="polite" role="status">
@@ -26,6 +27,7 @@ export function ToastContainer() {
             <span className="flex-1">{t.message}</span>
             <button
               onClick={() => dismiss(t.id)}
+              aria-label="Dismiss notification"
               className="text-[var(--fg-muted)] hover:text-[var(--fg)]"
             >
               <X className="h-3.5 w-3.5" />

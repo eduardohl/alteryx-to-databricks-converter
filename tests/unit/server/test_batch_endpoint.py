@@ -9,7 +9,6 @@ def test_batch_creates_job(client, simple_yxmd):
     resp = client.post(
         "/api/convert/batch",
         files=[("files", ("simple_filter.yxmd", simple_yxmd, "application/xml"))],
-        data={"format": "pyspark"},
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -40,7 +39,6 @@ def test_batch_status_after_create(client, simple_yxmd):
     resp = client.post(
         "/api/convert/batch",
         files=[("files", ("simple_filter.yxmd", simple_yxmd, "application/xml"))],
-        data={"format": "pyspark"},
     )
     job_id = resp.json()["job_id"]
 
@@ -54,6 +52,5 @@ def test_batch_rejects_non_yxmd(client):
     resp = client.post(
         "/api/convert/batch",
         files=[("files", ("readme.txt", b"hello", "text/plain"))],
-        data={"format": "pyspark"},
     )
     assert resp.status_code == 400

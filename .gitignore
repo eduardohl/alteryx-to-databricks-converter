@@ -64,3 +64,17 @@ frontend/.vite/
 # Spreadsheets (may contain customer data)
 *.xlsx
 *.xls
+
+# Customer/private workflow fixtures — never commit. Allow only repo-managed test fixtures.
+*.yxmd
+!tests/fixtures/**/*.yxmd
+!examples/**/*.yxmd
+!demo/**/*.yxmd
+
+# Local notes / scratch — drop workspace IDs, deploy URLs, customer-specific
+# config here. Anything under these paths is local-only and never tracked.
+/.local/
+/.local-notes/
+/notes.local.md
+/deploy.local.md
+/scratch/

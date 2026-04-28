@@ -8,12 +8,31 @@ import networkx as nx
 
 from a2d.ir.graph import WorkflowDAG
 from a2d.ir.nodes import (
+    BufferNode,
+    CreatePointsNode,
+    DistanceNode,
     FilterNode,
+    FindNearestNode,
     FormulaNode,
+    GeocoderNode,
+    MakeGridNode,
     MultiFieldFormulaNode,
     MultiRowFormulaNode,
     RegExNode,
+    SpatialMatchNode,
+    TradeAreaNode,
     UnsupportedNode,
+)
+
+_SPATIAL_TYPES = (
+    BufferNode,
+    SpatialMatchNode,
+    CreatePointsNode,
+    DistanceNode,
+    FindNearestNode,
+    GeocoderNode,
+    TradeAreaNode,
+    MakeGridNode,
 )
 
 
@@ -30,19 +49,37 @@ class ComplexityScore:
     expression_count: int
     max_dag_depth: int
     has_macro_refs: bool
+    spatial_tool_count: int = 0
     detail: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        """Serialize for JSON output."""
+        return {
+            "total_score": round(self.total_score, 1),
+            "level": self.level,
+            "node_count": self.node_count,
+            "edge_count": self.edge_count,
+            "unique_tool_types": self.unique_tool_types,
+            "unsupported_count": self.unsupported_count,
+            "expression_count": self.expression_count,
+            "max_dag_depth": self.max_dag_depth,
+            "has_macro_refs": self.has_macro_refs,
+            "spatial_tool_count": self.spatial_tool_count,
+            "detail": self.detail,
+        }
 
 
 class ComplexityAnalyzer:
     """Score workflow complexity on a 0-100 scale.
 
     Scoring weights:
-        - Node count: 20%
-        - Tool diversity: 15%
-        - Expressions: 20%
-        - Unsupported nodes: 25%
-        - Macro references: 10%
+        - Node count: 18%
+        - Tool diversity: 13%
+        - Expressions: 18%
+        - Unsupported nodes: 23%
+        - Macro references: 8%
         - DAG depth: 10%
+        - Spatial tools: 10%
 
     Thresholds:
         - 0-25: Low
@@ -63,6 +100,7 @@ class ComplexityAnalyzer:
         tool_types: set[str] = set()
         unsupported_count = 0
         expression_count = 0
+        spatial_tool_count = 0
 
         for node in nodes:
             tool_type = node.original_tool_type or type(node).__name__
@@ -71,18 +109,20 @@ class ComplexityAnalyzer:
             if isinstance(node, UnsupportedNode):
                 unsupported_count += 1
 
+            if isinstance(node, _SPATIAL_TYPES):
+                spatial_tool_count += 1
+
             # Count expressions
             if isinstance(node, FormulaNode):
                 expression_count += len(node.formulas)
-            elif isinstance(node, FilterNode) or isinstance(node, MultiRowFormulaNode):
+            elif isinstance(node, (FilterNode, MultiRowFormulaNode)):
                 if node.expression:
                     expression_count += 1
             elif isinstance(node, MultiFieldFormulaNode):
                 if node.expression:
                     expression_count += len(node.fields) if node.fields else 1
-            elif isinstance(node, RegExNode):
-                if node.expression:
-                    expression_count += 1
+            elif isinstance(node, RegExNode) and node.expression:
+                expression_count += 1
 
         unique_tool_types = len(tool_types)
         max_dag_depth = self._compute_dag_depth(dag)
@@ -111,14 +151,18 @@ class ComplexityAnalyzer:
         # DAG depth: 1-3=0, 3-10=linear, 10+=100
         depth_score = self._scale(max_dag_depth, low=3, high=15)
 
+        # Spatial tools: 0=0, 1=50, 3+=100 (need special Databricks setup)
+        spatial_score = self._scale(spatial_tool_count, low=0, high=3) if spatial_tool_count > 0 else 0.0
+
         # Weighted total
         total = (
-            node_score * 0.20
-            + diversity_score * 0.15
-            + expression_score * 0.20
-            + unsupported_score * 0.25
-            + macro_score * 0.10
+            node_score * 0.18
+            + diversity_score * 0.13
+            + expression_score * 0.18
+            + unsupported_score * 0.23
+            + macro_score * 0.08
             + depth_score * 0.10
+            + spatial_score * 0.10
         )
 
         # Clamp to 0-100
@@ -141,6 +185,7 @@ class ComplexityAnalyzer:
             "unsupported_score": round(unsupported_score, 1),
             "macro_score": round(macro_score, 1),
             "depth_score": round(depth_score, 1),
+            "spatial_score": round(spatial_score, 1),
         }
 
         return ComplexityScore(
@@ -153,6 +198,7 @@ class ComplexityAnalyzer:
             expression_count=expression_count,
             max_dag_depth=max_dag_depth,
             has_macro_refs=has_macro_refs,
+            spatial_tool_count=spatial_tool_count,
             detail=detail,
         )
 

@@ -2,28 +2,21 @@
 
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
-from server.main import app
 
-
-def test_ws_rejects_invalid_job_id():
+def test_ws_rejects_invalid_job_id(client):
     """Connecting to a non-existent job should receive an error and close."""
-    client = TestClient(app)
     with client.websocket_connect("/api/ws/batch/nonexistent") as ws:
         msg = ws.receive_json()
         assert msg["type"] == "error"
         assert "not found" in msg["message"].lower()
 
 
-def test_ws_connects_to_pending_job(simple_yxmd):
+def test_ws_connects_to_pending_job(client, simple_yxmd):
     """Connecting to a newly-created job should accept the WebSocket."""
-    client = TestClient(app)
-
     # Create a batch job
     resp = client.post(
         "/api/convert/batch",
         files=[("files", ("test.yxmd", simple_yxmd, "application/xml"))],
-        data={"format": "pyspark"},
     )
     assert resp.status_code == 200
     job_id = resp.json()["job_id"]

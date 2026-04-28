@@ -28,31 +28,65 @@ export const api = {
 
   convert: (
     file: File,
-    format: string,
-    opts?: { catalogName?: string; schemaName?: string; includeComments?: boolean },
+    opts?: {
+      catalogName?: string;
+      schemaName?: string;
+      includeComments?: boolean;
+      includeExpressionAudit?: boolean;
+      includePerformanceHints?: boolean;
+      generateDdl?: boolean;
+      generateDab?: boolean;
+      expandMacros?: boolean;
+    },
   ) => {
     const fd = new FormData();
     fd.append("file", file);
-    fd.append("format", format);
     if (opts?.catalogName) fd.append("catalog_name", opts.catalogName);
     if (opts?.schemaName) fd.append("schema_name", opts.schemaName);
     if (opts?.includeComments !== undefined)
       fd.append("include_comments", String(opts.includeComments));
+    if (opts?.includeExpressionAudit !== undefined)
+      fd.append("include_expression_audit", String(opts.includeExpressionAudit));
+    if (opts?.includePerformanceHints !== undefined)
+      fd.append("include_performance_hints", String(opts.includePerformanceHints));
+    if (opts?.generateDdl !== undefined)
+      fd.append("generate_ddl", String(opts.generateDdl));
+    if (opts?.generateDab !== undefined)
+      fd.append("generate_dab", String(opts.generateDab));
+    if (opts?.expandMacros !== undefined)
+      fd.append("expand_macros", String(opts.expandMacros));
     return request<ConversionResult>("/convert", { method: "POST", body: fd });
   },
 
   convertBatch: (
     files: File[],
-    format: string,
-    opts?: { catalogName?: string; schemaName?: string; includeComments?: boolean },
+    opts?: {
+      catalogName?: string;
+      schemaName?: string;
+      includeComments?: boolean;
+      includeExpressionAudit?: boolean;
+      includePerformanceHints?: boolean;
+      generateDdl?: boolean;
+      generateDab?: boolean;
+      expandMacros?: boolean;
+    },
   ) => {
     const fd = new FormData();
     files.forEach((f) => fd.append("files", f));
-    fd.append("format", format);
     if (opts?.catalogName) fd.append("catalog_name", opts.catalogName);
     if (opts?.schemaName) fd.append("schema_name", opts.schemaName);
     if (opts?.includeComments !== undefined)
       fd.append("include_comments", String(opts.includeComments));
+    if (opts?.includeExpressionAudit !== undefined)
+      fd.append("include_expression_audit", String(opts.includeExpressionAudit));
+    if (opts?.includePerformanceHints !== undefined)
+      fd.append("include_performance_hints", String(opts.includePerformanceHints));
+    if (opts?.generateDdl !== undefined)
+      fd.append("generate_ddl", String(opts.generateDdl));
+    if (opts?.generateDab !== undefined)
+      fd.append("generate_dab", String(opts.generateDab));
+    if (opts?.expandMacros !== undefined)
+      fd.append("expand_macros", String(opts.expandMacros));
     return request<{ job_id: string; total_files: number }>("/convert/batch", {
       method: "POST",
       body: fd,
@@ -91,7 +125,8 @@ export const api = {
     }),
 };
 
-// Types
+// ── Types ────────────────────────────────────────────────────────────
+
 export interface ToolInfo {
   tool_type: string;
   category: string;
@@ -129,27 +164,91 @@ export interface DagData {
   edges: DagEdge[];
 }
 
+export interface ExpressionAuditEntry {
+  node_id: number;
+  tool_type: string;
+  field_name: string;
+  original_expression: string;
+  translation_method: string;
+  confidence: number;
+  warnings: string[];
+}
+
+export interface PerformanceHint {
+  node_id: number;
+  hint_type: string;
+  priority: string;
+  suggestion: string;
+  code_snippet: string;
+  tool_type: string;
+}
+
+export interface NodeCodeMapping {
+  node_id: number;
+  tool_type: string;
+  start_line: number;
+  end_line: number;
+  file_index: number;
+}
+
+export interface ConfidenceDimension {
+  name: string;
+  score: number;
+  weight: number;
+  details: string;
+}
+
+export interface ConfidenceScore {
+  overall: number;
+  level: string;
+  dimensions: ConfidenceDimension[];
+}
+
+export type FormatId = "pyspark" | "dlt" | "sql" | "lakeflow";
+
+export interface FormatResult {
+  format: FormatId;
+  status: "success" | "failed";
+  files: GeneratedFile[];
+  stats: { coverage_percentage?: number; [k: string]: unknown };
+  warnings: string[];
+  confidence: ConfidenceScore | null;
+  error: string | null;
+}
+
 export interface ConversionResult {
   workflow_name: string;
-  files: GeneratedFile[];
-  stats: Record<string, unknown>;
-  warnings: string[];
   node_count: number;
   edge_count: number;
+  warnings: string[];
   dag_data: DagData | null;
+  expression_audit?: ExpressionAuditEntry[] | null;
+  performance_hints?: PerformanceHint[] | null;
+  node_code_mappings?: NodeCodeMapping[] | null;
+  best_format: string;
+  formats: Record<string, FormatResult>;
+  /** Single source of truth for the headline coverage metric. Mirrors the
+   *  best-format coverage; null if every format failed. */
+  coverage?: number | null;
+  context_id?: string | null;
+}
+
+export interface ConversionErrorDetail {
+  message: string;
+  type: string;
+  node_id?: number;
+  severity?: string;
 }
 
 export interface FileResult {
   file_name: string;
   workflow_name: string;
   success: boolean;
-  coverage: number;
   node_count: number;
   edge_count: number;
-  files_generated: number;
-  errors: Array<Record<string, unknown>>;
   warnings: string[];
-  files?: GeneratedFile[];
+  formats: Record<string, FormatResult>;
+  best_format: string;
 }
 
 export interface BatchMetrics {

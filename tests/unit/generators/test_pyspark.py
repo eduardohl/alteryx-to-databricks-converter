@@ -98,6 +98,7 @@ class TestFilterNode:
         )
         # Downstream node wired to False output only
         from a2d.ir.nodes import BrowseNode
+
         browse = BrowseNode(node_id=3, original_tool_type="Browse")
         dag = WorkflowDAG()
         dag.add_node(read)
@@ -123,6 +124,7 @@ class TestFilterNode:
             expression="[Age] > 25",
         )
         from a2d.ir.nodes import BrowseNode
+
         browse_true = BrowseNode(node_id=3, original_tool_type="Browse")
         browse_false = BrowseNode(node_id=4, original_tool_type="Browse")
         dag = WorkflowDAG()
@@ -325,7 +327,7 @@ class TestSummarizeNode:
 
 class TestSelectNode:
     def test_select_node_renames(self, generator: PySparkGenerator):
-        """SelectNode with renames generates .withColumnRenamed()."""
+        """SelectNode with renames generates .withColumnsRenamed()."""
         read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
         sel = SelectNode(
             node_id=2,
@@ -353,7 +355,7 @@ class TestSelectNode:
         output = generator.generate(dag)
         content = output.files[0].content
 
-        assert 'withColumnRenamed("OldName", "NewName")' in content
+        assert 'withColumnsRenamed({"OldName": "NewName"})' in content
         assert 'drop("DropMe")' in content
 
 
@@ -410,6 +412,7 @@ class TestUnsupportedNode:
     def test_unsupported_node_verbose(self):
         """UnsupportedNode emits detailed stubs when verbose_unsupported=True."""
         from a2d.config import ConversionConfig
+
         verbose_gen = PySparkGenerator(ConversionConfig(verbose_unsupported=True))
         read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/data.csv", file_format="csv")
         unsup = UnsupportedNode(
@@ -637,7 +640,7 @@ class TestReadNodeInlining:
         formula = FormulaNode(
             node_id=2,
             original_tool_type="Formula",
-            formulas=[FormulaField(output_field="x", expression='[x] + 1')],
+            formulas=[FormulaField(output_field="x", expression="[x] + 1")],
         )
         dag = WorkflowDAG()
         dag.add_node(read)
@@ -698,8 +701,12 @@ class TestReadNodeInlining:
             connection_string="aka:CONN",
         )
         # Give it 2 successors so it stays named (making it easier to inspect its own cell)
-        f1 = FormulaNode(node_id=2, original_tool_type="Formula", formulas=[FormulaField(output_field="x", expression="1")])
-        f2 = FormulaNode(node_id=3, original_tool_type="Formula", formulas=[FormulaField(output_field="y", expression="2")])
+        f1 = FormulaNode(
+            node_id=2, original_tool_type="Formula", formulas=[FormulaField(output_field="x", expression="1")]
+        )
+        f2 = FormulaNode(
+            node_id=3, original_tool_type="Formula", formulas=[FormulaField(output_field="y", expression="2")]
+        )
         dag = WorkflowDAG()
         dag.add_node(read)
         dag.add_node(f1)
@@ -721,6 +728,7 @@ class TestStringEscaping:
     def test_path_with_double_quote_does_not_produce_syntax_error(self, generator: PySparkGenerator):
         """A file path containing a double-quote must be escaped so generated code is valid Python."""
         import ast
+
         node = ReadNode(
             node_id=1,
             original_tool_type="Input Data",
@@ -738,6 +746,7 @@ class TestStringEscaping:
     def test_write_path_with_double_quote_is_escaped(self, generator: PySparkGenerator):
         """WriteNode path containing a double-quote is safely escaped."""
         import ast
+
         read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/in.csv", file_format="csv")
         write = WriteNode(
             node_id=2,
@@ -766,6 +775,7 @@ class TestSQLNormalization:
 
     def test_getdate_replaced_with_current_timestamp(self):
         from a2d.utils.types import normalize_sql_for_spark
+
         sql = "SELECT GETDATE() AS run_date FROM my_table"
         result, warns = normalize_sql_for_spark(sql)
         assert "CURRENT_TIMESTAMP()" in result
@@ -774,36 +784,42 @@ class TestSQLNormalization:
 
     def test_getdate_case_insensitive(self):
         from a2d.utils.types import normalize_sql_for_spark
+
         for variant in ["GETDATE()", "getdate()", "GetDate()", "GETDATE (  )"]:
             result, _ = normalize_sql_for_spark(f"SELECT {variant} FROM t")
             assert "CURRENT_TIMESTAMP()" in result
 
     def test_now_replaced_with_current_timestamp(self):
         from a2d.utils.types import normalize_sql_for_spark
+
         result, _ = normalize_sql_for_spark("SELECT NOW() AS ts FROM t")
         assert "CURRENT_TIMESTAMP()" in result
         assert "NOW()" not in result
 
     def test_sysdate_replaced_with_current_timestamp(self):
         from a2d.utils.types import normalize_sql_for_spark
+
         result, _ = normalize_sql_for_spark("SELECT SYSDATE AS ts FROM t")
         assert "CURRENT_TIMESTAMP()" in result
         assert "SYSDATE" not in result
 
     def test_double_quoted_alias_converted_to_backtick(self):
         from a2d.utils.types import normalize_sql_for_spark
+
         result, _ = normalize_sql_for_spark('SELECT col AS "account_number" FROM t')
         assert "`account_number`" in result
         assert '"account_number"' not in result
 
     def test_hyphen_in_alias_replaced_with_underscore(self):
         from a2d.utils.types import normalize_sql_for_spark
+
         result, _ = normalize_sql_for_spark('SELECT col AS "account-number" FROM t')
         assert "`account_number`" in result
         assert "account-number" not in result
 
     def test_combined_getdate_and_double_quote_alias(self):
         from a2d.utils.types import normalize_sql_for_spark
+
         sql = 'SELECT GETDATE() AS "run-date", acct AS "acct-num" FROM schema.table'
         result, _ = normalize_sql_for_spark(sql)
         assert "CURRENT_TIMESTAMP()" in result
@@ -813,6 +829,7 @@ class TestSQLNormalization:
 
     def test_no_change_when_no_problematic_patterns(self):
         from a2d.utils.types import normalize_sql_for_spark
+
         sql = "SELECT a, b, c FROM my_table WHERE d = 1"
         result, warns = normalize_sql_for_spark(sql)
         assert result == sql
@@ -820,6 +837,7 @@ class TestSQLNormalization:
 
     def test_current_date_replaced_with_spark_function(self):
         from a2d.utils.types import normalize_sql_for_spark
+
         sql = "SELECT (Current Date) as RUN_DT FROM my_table"
         result, _ = normalize_sql_for_spark(sql)
         assert "CURRENT_DATE()" in result
@@ -827,6 +845,7 @@ class TestSQLNormalization:
 
     def test_current_time_replaced_with_spark_function(self):
         from a2d.utils.types import normalize_sql_for_spark
+
         sql = "SELECT (Current Time) as RUN_TM FROM my_table"
         result, _ = normalize_sql_for_spark(sql)
         assert "CURRENT_TIME()" in result
@@ -857,6 +876,7 @@ class TestDateTimeNodeNowMode:
     def test_now_mode_emits_current_timestamp(self, generator: PySparkGenerator):
         """DateTimeNode with conversion_mode='now' generates F.current_timestamp()."""
         from a2d.ir.nodes import DateTimeNode
+
         read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/in.csv", file_format="csv")
         dt = DateTimeNode(
             node_id=2,
@@ -894,8 +914,8 @@ class TestWriteNodeOutputFixes:
         output = generator.generate(dag)
         content = output.files[0].content
         assert "# TODO: Excel write not supported natively in Databricks." in content
-        assert ".write.format(\"xlsx\")" not in content
-        assert ".write.format(\"xlsx|||" not in content
+        assert '.write.format("xlsx")' not in content
+        assert '.write.format("xlsx|||' not in content
         assert "Sheet1" in content  # sheet name preserved in comment
 
     def test_write_unc_path_uses_todo_placeholder(self, generator: PySparkGenerator):
@@ -971,6 +991,7 @@ class TestDynamicInputDateNormalization:
 
     def _make_dyn_iso(self, generator, modifications):
         from a2d.ir.nodes import DynamicInputNode
+
         read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/in.csv", file_format="csv")
         dyn = DynamicInputNode(
             node_id=6,
@@ -988,23 +1009,30 @@ class TestDynamicInputDateNormalization:
 
     def test_r1_iso_placeholder_emits_normalization_helper(self, generator: PySparkGenerator):
         """R1 (RED): ISO date placeholder → helper function _to_iso_date_6 is defined."""
-        content = self._make_dyn_iso(generator, [
-            {"field": "ReportDate", "replace_text": "2023-01-01"},
-        ])
+        content = self._make_dyn_iso(
+            generator,
+            [
+                {"field": "ReportDate", "replace_text": "2023-01-01"},
+            ],
+        )
         assert "def _to_iso_date_6" in content
         assert "strptime" in content
 
     def test_r2_iso_placeholder_replace_uses_helper_not_raw_str(self, generator: PySparkGenerator):
         """R2 (RED): ISO date placeholder → .replace() uses helper, not raw str(_row[...])."""
-        content = self._make_dyn_iso(generator, [
-            {"field": "ReportDate", "replace_text": "2023-01-01"},
-        ])
+        content = self._make_dyn_iso(
+            generator,
+            [
+                {"field": "ReportDate", "replace_text": "2023-01-01"},
+            ],
+        )
         assert 'str(_row["ReportDate"])' not in content
         assert '_to_iso_date_6(_row["ReportDate"])' in content
 
     def test_r3_non_date_placeholder_uses_raw_str_no_helper(self, generator: PySparkGenerator):
         """R3 (RED): Non-date placeholder → raw str() is used, no helper emitted."""
         from a2d.ir.nodes import DynamicInputNode
+
         read = ReadNode(node_id=1, original_tool_type="Input Data", file_path="/in.csv", file_format="csv")
         dyn = DynamicInputNode(
             node_id=6,
@@ -1024,8 +1052,11 @@ class TestDynamicInputDateNormalization:
 
     def test_r4_empty_fallback_uses_struct_type_not_schema_none(self, generator: PySparkGenerator):
         """R4 (RED): Empty DataFrame fallback must use StructType([]), not schema=None."""
-        content = self._make_dyn_iso(generator, [
-            {"field": "ReportDate", "replace_text": "2023-01-01"},
-        ])
+        content = self._make_dyn_iso(
+            generator,
+            [
+                {"field": "ReportDate", "replace_text": "2023-01-01"},
+            ],
+        )
         assert "schema=None" not in content
         assert "StructType([])" in content

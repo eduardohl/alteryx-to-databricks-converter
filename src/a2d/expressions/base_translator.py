@@ -30,15 +30,33 @@ from a2d.expressions.parser import ExpressionParser
 __all__ = ["BaseExpressionTranslator", "BaseTranslationError"]
 
 # Functions whose return type is always string — used to detect string + concatenation
-_STRING_PRODUCING_FUNCTIONS: frozenset[str] = frozenset({
-    "datetimeformat", "tostring", "converttostring",
-    "trim", "ltrim", "rtrim",
-    "padleft", "padright",
-    "substring", "mid", "left", "right",
-    "uppercase", "lowercase", "titlecase", "toupper", "tolower",
-    "replace", "findstring", "reversestring", "stringelement",
-    "regexreplace", "regexextract",
-})
+_STRING_PRODUCING_FUNCTIONS: frozenset[str] = frozenset(
+    {
+        "datetimeformat",
+        "tostring",
+        "converttostring",
+        "trim",
+        "ltrim",
+        "rtrim",
+        "padleft",
+        "padright",
+        "substring",
+        "mid",
+        "left",
+        "right",
+        "uppercase",
+        "lowercase",
+        "titlecase",
+        "toupper",
+        "tolower",
+        "replace",
+        "findstring",
+        "reversestring",
+        "stringelement",
+        "regexreplace",
+        "regexextract",
+    }
+)
 
 
 class BaseExpressionTranslator(ABC):
@@ -138,3 +156,6 @@ class BaseExpressionTranslator(ABC):
 
     @abstractmethod
     def _visit_InExpr(self, node: InExpr) -> str: ...
+
+    @abstractmethod
+    def _visit_FunctionCall(self, node: FunctionCall) -> str: ...

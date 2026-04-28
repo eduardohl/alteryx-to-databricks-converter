@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+
 from a2d.config import ConversionConfig
 from a2d.converters.registry import ConverterRegistry, ToolConverter
 from a2d.converters.utils import ensure_list, safe_get
@@ -27,20 +29,13 @@ class SampleConverter(ToolConverter):
         pct_str = safe_get(cfg, "Percent")
         percentage = None
         if pct_str:
-            try:
+            with contextlib.suppress(ValueError):
                 percentage = float(pct_str)
-            except ValueError:
-                pass
 
         # Handle macro-style config (RandomRecords.yxmc) where settings are stored as
         # a list of <Value name="..."> elements rather than top-level keys.
         if not mode and isinstance(cfg.get("Value"), list):
-            values = {
-                v.get("@name", ""): v.get("#text", "")
-                for v in cfg.get("Value", [])
-                if isinstance(v, dict)
-            }
-            is_number = values.get("Number", "True").lower() == "true"
+            values = {v.get("@name", ""): v.get("#text", "") for v in cfg.get("Value", []) if isinstance(v, dict)}
             is_percent = values.get("Percent", "False").lower() == "true"
             is_deterministic = values.get("Deterministic", "False").lower() == "true"
             if is_percent:
@@ -64,6 +59,13 @@ class SampleConverter(ToolConverter):
 
         if not mode:
             mode = "First"
+
+        # Extract seed for deterministic random sampling
+        seed_str = safe_get(cfg, "Seed") or safe_get(cfg, "RandomSeed")
+        seed: int | None = None
+        if seed_str:
+            with contextlib.suppress(ValueError):
+                seed = int(seed_str)
 
         # Map Alteryx mode strings to IR sample_method
         mode_map = {
@@ -97,4 +99,5 @@ class SampleConverter(ToolConverter):
             n_records=n_records,
             percentage=percentage,
             group_fields=group_fields,
+            seed=seed,
         )

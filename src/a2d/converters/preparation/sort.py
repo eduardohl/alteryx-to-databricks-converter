@@ -32,7 +32,14 @@ class SortConverter(ToolConverter):
                 name = f.get("@field", f.get("@name", ""))
                 order = f.get("@order", "Ascending")
                 ascending = order.lower() != "descending"
-                sort_fields.append(SortField(field_name=name, ascending=ascending))
+                # Alteryx supports NullOrder: "First" or "Last"
+                null_order = str(f.get("@NullOrder", f.get("@nullOrder", "")))
+                nulls_first: bool | None = None
+                if null_order.lower() == "first":
+                    nulls_first = True
+                elif null_order.lower() == "last":
+                    nulls_first = False
+                sort_fields.append(SortField(field_name=str(name), ascending=ascending, nulls_first=nulls_first))
 
         return SortNode(
             node_id=parsed_node.tool_id,

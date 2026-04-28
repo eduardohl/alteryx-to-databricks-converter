@@ -107,7 +107,5 @@ class CloudStorageConverter(ToolConverter):
             path=path,
             file_format=file_format,
             auth_config=auth_config,
-            conversion_notes=[
-                f"Cloud storage {direction} from {provider}; credentials need manual configuration."
-            ],
+            conversion_notes=[f"Cloud storage {direction} from {provider}; credentials need manual configuration."],
         )

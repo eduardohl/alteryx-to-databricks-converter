@@ -79,6 +79,8 @@ class WriteNode(IRNode):
     delimiter: str = ","
     encoding: str = "utf-8"
     field_info: list[Any] = field(default_factory=list)
+    partition_fields: list[str] = field(default_factory=list)
+    compression: str | None = None  # gzip, snappy, zstd, etc.
 
 
 @dataclass
@@ -176,6 +178,7 @@ class SortField:
 
     field_name: str
     ascending: bool = True
+    nulls_first: bool | None = None  # None = default, True = NULLS FIRST, False = NULLS LAST
 
 
 @dataclass
@@ -193,6 +196,7 @@ class SampleNode(IRNode):
     n_records: int | None = None
     percentage: float | None = None
     group_fields: list[str] = field(default_factory=list)
+    seed: int | None = None  # Random seed for deterministic sampling
 
 
 @dataclass
@@ -317,7 +321,6 @@ class FindReplaceNode(IRNode):
     replace_field: str = ""
     find_mode: str = "exact"  # "exact", "starts_with", "contains", "regex"
     case_sensitive: bool = True
-    append_unused: bool = False
 
 
 @dataclass
@@ -585,9 +588,9 @@ class DynamicInputNode(IRNode):
     file_format: str = "csv"
     template_file: str = ""
     # ModifySQL mode fields
-    mode: str = ""                        # e.g. "ModifySQL", "ChangeFile", "ChangeBoth"
-    template_query: str = ""              # SQL template from aka:/odbc: connection
-    template_connection: str = ""         # connection string prefix (aka:/odbc:)
+    mode: str = ""  # e.g. "ModifySQL", "ChangeFile", "ChangeBoth"
+    template_query: str = ""  # SQL template from aka:/odbc: connection
+    template_connection: str = ""  # connection string prefix (aka:/odbc:)
     modifications: list = field(default_factory=list)  # [{field, replace_text}]
 
 
@@ -799,282 +802,19 @@ class MakeGridNode(IRNode):
 
 
 @dataclass
-class DecisionTreeNode(IRNode):
-    """Decision tree classification or regression."""
+class PredictiveModelNode(IRNode):
+    """Generic node for all Alteryx predictive/ML tools.
 
+    All predictive tools produce stub code that requires manual conversion
+    to Spark MLlib or equivalent. The ``model_type`` identifies the original
+    Alteryx tool, and ``config`` preserves extracted parameters.
+    """
+
+    model_type: str = ""
     target_field: str = ""
     feature_fields: list[str] = field(default_factory=list)
-    model_type: str = "classification"
-    max_depth: int = 5
     output_field: str = "Prediction"
-
-
-@dataclass
-class ForestModelNode(IRNode):
-    """Random forest classification or regression."""
-
-    target_field: str = ""
-    feature_fields: list[str] = field(default_factory=list)
-    model_type: str = "classification"
-    num_trees: int = 100
-    max_depth: int = 5
-    output_field: str = "Prediction"
-
-
-@dataclass
-class LinearRegressionNode(IRNode):
-    """Linear regression model."""
-
-    target_field: str = ""
-    feature_fields: list[str] = field(default_factory=list)
-    regularization: float = 0.0
-    output_field: str = "Prediction"
-
-
-@dataclass
-class LogisticRegressionNode(IRNode):
-    """Logistic regression model."""
-
-    target_field: str = ""
-    feature_fields: list[str] = field(default_factory=list)
-    regularization: float = 0.0
-    max_iterations: int = 100
-    output_field: str = "Prediction"
-
-
-@dataclass
-class ScoreModelNode(IRNode):
-    """Score data using a previously trained model."""
-
-    model_reference: str = ""
-    feature_fields: list[str] = field(default_factory=list)
-    output_field: str = "Score"
-
-
-@dataclass
-class BoostedModelNode(IRNode):
-    """Gradient boosted tree classification or regression."""
-
-    target_field: str = ""
-    feature_fields: list[str] = field(default_factory=list)
-    model_type: str = "classification"
-    num_iterations: int = 100
-    max_depth: int = 5
-    learning_rate: float = 0.1
-    output_field: str = "Prediction"
-
-
-@dataclass
-class NaiveBayesNode(IRNode):
-    """Naive Bayes classification."""
-
-    target_field: str = ""
-    feature_fields: list[str] = field(default_factory=list)
-    smoothing: float = 1.0
-    output_field: str = "Prediction"
-
-
-@dataclass
-class SupportVectorMachineNode(IRNode):
-    """Support vector machine classification."""
-
-    target_field: str = ""
-    feature_fields: list[str] = field(default_factory=list)
-    regularization: float = 1.0
-    max_iterations: int = 100
-    output_field: str = "Prediction"
-
-
-@dataclass
-class NeuralNetworkNode(IRNode):
-    """Neural network classification."""
-
-    target_field: str = ""
-    feature_fields: list[str] = field(default_factory=list)
-    hidden_layers: list[int] = field(default_factory=lambda: [64, 32])
-    max_iterations: int = 100
-    output_field: str = "Prediction"
-
-
-@dataclass
-class GammaRegressionNode(IRNode):
-    """Gamma regression (GLM with gamma family)."""
-
-    target_field: str = ""
-    feature_fields: list[str] = field(default_factory=list)
-    link_function: str = "log"
-    output_field: str = "Prediction"
-
-
-@dataclass
-class CountRegressionNode(IRNode):
-    """Count regression (GLM with Poisson family)."""
-
-    target_field: str = ""
-    feature_fields: list[str] = field(default_factory=list)
-    link_function: str = "log"
-    output_field: str = "Prediction"
-
-
-@dataclass
-class SplineModelNode(IRNode):
-    """Spline-based regression model."""
-
-    target_field: str = ""
-    feature_fields: list[str] = field(default_factory=list)
-    max_knots: int = 10
-    output_field: str = "Prediction"
-
-
-@dataclass
-class StepwiseNode(IRNode):
-    """Stepwise feature selection."""
-
-    target_field: str = ""
-    feature_fields: list[str] = field(default_factory=list)
-    direction: str = "both"  # "forward", "backward", "both"
-    output_field: str = "Prediction"
-
-
-@dataclass
-class KCentroidsNode(IRNode):
-    """K-means clustering."""
-
-    feature_fields: list[str] = field(default_factory=list)
-    k: int = 5
-    max_iterations: int = 100
-    output_field: str = "Cluster"
-
-
-@dataclass
-class PrincipalComponentsNode(IRNode):
-    """Principal Component Analysis (PCA)."""
-
-    feature_fields: list[str] = field(default_factory=list)
-    num_components: int = 5
-    output_field: str = "PC"
-
-
-@dataclass
-class CrossValidationNode(IRNode):
-    """Cross-validation wrapper for model evaluation."""
-
-    num_folds: int = 5
-    model_reference: str = ""
-    output_field: str = "CV_Score"
-
-
-@dataclass
-class ARIMANode(IRNode):
-    """ARIMA time series model."""
-
-    time_field: str = ""
-    value_field: str = ""
-    p: int = 1
-    d: int = 1
-    q: int = 1
-    output_field: str = "Forecast"
-
-
-@dataclass
-class ETSNode(IRNode):
-    """Exponential smoothing (ETS) time series model."""
-
-    time_field: str = ""
-    value_field: str = ""
-    error_type: str = "additive"
-    trend_type: str = "additive"
-    seasonal_type: str = "additive"
-    output_field: str = "Forecast"
-
-
-@dataclass
-class AppendClusterNode(IRNode):
-    """Append cluster assignments from a pre-trained clustering model."""
-
-    model_reference: str = ""
-    feature_fields: list[str] = field(default_factory=list)
-    output_field: str = "Cluster"
-
-
-@dataclass
-class FindNearestNeighborsNode(IRNode):
-    """K-nearest neighbors search."""
-
-    feature_fields: list[str] = field(default_factory=list)
-    k: int = 5
-    distance_metric: str = "euclidean"
-    output_field: str = "Neighbor"
-
-
-@dataclass
-class KCentroidsDiagnosticsNode(IRNode):
-    """Clustering diagnostics (silhouette score, elbow analysis)."""
-
-    feature_fields: list[str] = field(default_factory=list)
-    output_field: str = "Diagnostics"
-
-
-@dataclass
-class LiftChartNode(IRNode):
-    """Model evaluation lift chart."""
-
-    prediction_field: str = ""
-    actual_field: str = ""
-    output_field: str = "Lift"
-
-
-@dataclass
-class ModelComparisonNode(IRNode):
-    """Compare multiple models side by side."""
-
-    model_references: list[str] = field(default_factory=list)
-    output_field: str = "Comparison"
-
-
-@dataclass
-class ModelCoefficientsNode(IRNode):
-    """Extract coefficients from a fitted regression model."""
-
-    model_reference: str = ""
-    output_field: str = "Coefficients"
-
-
-@dataclass
-class TSForecastNode(IRNode):
-    """Time series forecast visualization."""
-
-    time_field: str = ""
-    value_field: str = ""
-    forecast_field: str = ""
-    output_field: str = "Forecast"
-
-
-@dataclass
-class MeansTestNode(IRNode):
-    """Statistical t-test / test of means."""
-
-    field_a: str = ""
-    field_b: str = ""
-    test_type: str = "two_sample"  # "one_sample", "two_sample", "paired"
-    output_field: str = "PValue"
-
-
-@dataclass
-class VarianceInflationFactorsNode(IRNode):
-    """Variance inflation factor analysis for multicollinearity."""
-
-    feature_fields: list[str] = field(default_factory=list)
-    output_field: str = "VIF"
-
-
-@dataclass
-class ABAnalysisNode(IRNode):
-    """A/B test analysis."""
-
-    treatment_field: str = ""
-    response_field: str = ""
-    output_field: str = "ABResult"
+    config: dict[str, Any] = field(default_factory=dict)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

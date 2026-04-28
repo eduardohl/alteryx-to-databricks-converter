@@ -32,6 +32,17 @@ CREATE INDEX IF NOT EXISTS idx_history_created ON conversion_history(created_at 
 """
 
 
+def _resolve_backend(settings) -> str:
+    """Determine the database backend from settings (auto-detect if not explicit)."""
+    if settings.db_backend:
+        return settings.db_backend
+    if settings.lakebase_endpoint and settings.pg_host:
+        return "lakebase"
+    if settings.database_url:
+        return "postgres"
+    return ""
+
+
 def _get_pool():
     """Return the connection pool, or None if database is not configured."""
     global _pool
@@ -39,15 +50,30 @@ def _get_pool():
         return _pool
 
     from server.settings import settings
-    if not settings.database_url:
+
+    backend = _resolve_backend(settings)
+    if not backend:
         return None
 
     try:
-        from psycopg_pool import ConnectionPool
-        _pool = ConnectionPool(settings.database_url, min_size=1, max_size=5)
+        if backend == "lakebase":
+            from server.services.lakebase import create_lakebase_pool
+
+            _pool = create_lakebase_pool(
+                endpoint_name=settings.lakebase_endpoint,
+                host=settings.pg_host,
+                port=settings.pg_port,
+                database=settings.pg_database,
+                user=settings.pg_user,
+                sslmode=settings.pg_sslmode,
+            )
+        else:
+            from psycopg_pool import ConnectionPool
+
+            _pool = ConnectionPool(settings.database_url, min_size=1, max_size=5)
         return _pool
     except Exception:
-        logger.exception("Failed to create database connection pool")
+        logger.exception("Failed to create database connection pool (backend=%s)", backend)
         return None
 
 

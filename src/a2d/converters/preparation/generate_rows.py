@@ -26,9 +26,7 @@ class GenerateRowsConverter(ToolConverter):
         condition_expression = html.unescape(safe_get(cfg, "ConditionExpression"))
         loop_expression = html.unescape(safe_get(cfg, "LoopExpression"))
         output_field = safe_get(cfg, "FieldName") or safe_get(cfg, "OutputField")
-        output_type = safe_get(cfg, "FieldType", default="Int64")
-        if not output_type:
-            output_type = "Int64"
+        output_type = safe_get(cfg, "FieldType", default="Int64") or "Int64"
 
         return GenerateRowsNode(
             node_id=parsed_node.tool_id,

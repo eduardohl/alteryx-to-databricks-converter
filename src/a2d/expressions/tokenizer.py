@@ -47,6 +47,7 @@ class Token:
 
 KEYWORDS = {"IF", "THEN", "ELSE", "ELSEIF", "ENDIF", "NULL", "TRUE", "FALSE", "IN"}
 LOGICAL_WORDS = {"AND", "OR", "NOT"}
+_CONTROL_KEYWORDS = frozenset(KEYWORDS - {"NULL", "TRUE", "FALSE"})
 
 # Row reference pattern: [Row-1:FieldName] or [Row+1:FieldName]
 _ROW_REF_PATTERN = re.compile(r"\[Row([+-]\d+):([^\]]+)\]", re.IGNORECASE)
@@ -309,7 +310,6 @@ class AlteryxTokenizer:
             # It's a function call unless it's a control-flow keyword (IF/THEN/ELSE/etc.).
             # NULL/TRUE/FALSE followed by '(' should be treated as function calls so that
             # Null() (which maps to F.lit(None)) parses correctly.
-            _CONTROL_KEYWORDS = KEYWORDS - {"NULL", "TRUE", "FALSE"}
             if upper not in _CONTROL_KEYWORDS and upper not in LOGICAL_WORDS:
                 return Token(TokenType.FUNCTION, word, start), pos
 

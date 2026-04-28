@@ -20,6 +20,8 @@ _PLUGIN_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"SnowflakeOutput|SnowflakeInput", re.IGNORECASE), "SnowflakeConnector", "connectors"),
     (re.compile(r"PowerBI", re.IGNORECASE), "PowerBIConnector", "connectors"),
     (re.compile(r"GoogleAnalytics|GoogleBigQuery|GoogleSheets", re.IGNORECASE), "GoogleConnector", "connectors"),
+    # Versioned SDK plugins (name format ToolName_<major>_<minor>_<patch>)
+    (re.compile(r"^DataverseInput(_\d+)*$", re.IGNORECASE), "DataverseInput", "connectors"),
 ]
 
 # Known Alteryx built-in macros (EngineSettings Macro="...") mapped to tool types.
@@ -56,7 +58,7 @@ class NodeParser:
                     tool_type, category = ptype, pcat
                     break
             if tool_type == "Unknown":
-                logger.warning(f"Unknown plugin: {plugin_name} (ToolID={tool_id})")
+                logger.warning("Unknown plugin: %s (ToolID=%d)", plugin_name, tool_id)
 
         # If still unknown and no plugin name, check EngineSettings Macro attribute.
         # Some Alteryx built-in tools ship as .yxmc macros without a plugin entry.

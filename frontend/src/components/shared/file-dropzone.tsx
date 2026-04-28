@@ -39,10 +39,18 @@ export function FileDropzone({
     onFilesChange(files.filter((f) => f !== file));
   };
 
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
   return (
     <div className="space-y-3">
       <div
         {...getRootProps()}
+        role="button"
+        aria-label="Upload workflow files — drag and drop or click to browse"
         className={cn(
           "flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-8 transition-colors cursor-pointer",
           isDragActive
@@ -58,11 +66,17 @@ export function FileDropzone({
           <Upload className="h-8 w-8 text-[var(--fg-muted)] mb-3" />
         </motion.div>
         <p className="text-sm font-medium text-[var(--fg)]">
-          {isDragActive ? "Drop files here" : "Drag & drop .yxmd files"}
+          {isDragActive
+            ? "Drop files here"
+            : typeof window !== "undefined" && ("ontouchstart" in window || window.matchMedia("(pointer: coarse)").matches)
+              ? "Tap to browse for .yxmd files"
+              : "Drag & drop .yxmd files"}
         </p>
-        <p className="text-xs text-[var(--fg-muted)] mt-1">
-          or click to browse
-        </p>
+        {!isDragActive && !("ontouchstart" in (typeof window !== "undefined" ? window : {})) && (
+          <p className="text-xs text-[var(--fg-muted)] mt-1">
+            or click to browse
+          </p>
+        )}
       </div>
 
       {/* File list */}
@@ -77,10 +91,12 @@ export function FileDropzone({
           >
             <span className="text-sm text-[var(--fg)] truncate">
               {file.name}
+              <span className="ml-2 text-xs text-[var(--fg-muted)]">({formatSize(file.size)})</span>
             </span>
             <Button
               variant="ghost"
               size="icon"
+              aria-label={`Remove ${file.name}`}
               onClick={() => removeFile(file)}
               className="h-6 w-6 shrink-0"
             >

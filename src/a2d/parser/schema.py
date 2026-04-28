@@ -137,6 +137,9 @@ PLUGIN_NAME_MAP: dict[str, tuple[str, str]] = {
     "AlteryxBasePluginsGui.AutoField.AutoField": ("AutoField", "preparation"),
     "AlteryxBasePluginsGui.DynamicRename.DynamicRename": ("DynamicRename", "preparation"),
     "AlteryxBasePluginsGui.Imputation.Imputation": ("Imputation", "preparation"),
+    "AlteryxBasePluginsGui.DynamicSelect.DynamicSelect": ("DynamicSelect", "preparation"),
+    "AlteryxBasePluginsGui.DynamicReplace.DynamicReplace": ("DynamicReplace", "preparation"),
+    "AlteryxBasePluginsGui.MakeGroup.MakeGroup": ("MakeGroup", "preparation"),
     # ── Join ────────────────────────────────────────────────────────────
     "AlteryxBasePluginsGui.Join.Join": ("Join", "join"),
     "AlteryxBasePluginsGui.Union.Union": ("Union", "join"),
@@ -149,7 +152,12 @@ PLUGIN_NAME_MAP: dict[str, tuple[str, str]] = {
     "AlteryxBasePluginsGui.TextToColumns.TextToColumns": ("TextToColumns", "parse"),
     "AlteryxBasePluginsGui.DateTime.DateTime": ("DateTime", "parse"),
     "AlteryxBasePluginsGui.JsonParse.JsonParse": ("JsonParse", "parse"),
+    "AlteryxBasePluginsGui.JSONParse.JSONParse": ("JsonParse", "parse"),  # alternate casing
     "AlteryxBasePluginsGui.XMLParse.XMLParse": ("XMLParse", "parse"),
+    "AlteryxBasePluginsGui.MakeColumns.MakeColumns": ("MakeColumns", "parse"),
+    "AlteryxBasePluginsGui.BlobConvert.BlobConvert": ("BlobConvert", "parse"),
+    "AlteryxBasePluginsGui.BlobInput.BlobInput": ("BlobInput", "io"),
+    "AlteryxBasePluginsGui.FieldInfo.FieldInfo": ("FieldInfo", "parse"),
     # ── Transform ───────────────────────────────────────────────────────
     "AlteryxBasePluginsGui.Summarize.Summarize": ("Summarize", "transform"),
     "AlteryxSpatialPluginsGui.Summarize.Summarize": ("Summarize", "transform"),  # spatial variant
@@ -163,6 +171,10 @@ PLUGIN_NAME_MAP: dict[str, tuple[str, str]] = {
     "AlteryxBasePluginsGui.PythonTool.PythonTool": ("PythonTool", "developer"),
     "AlteryxBasePluginsGui.RunCommand.RunCommand": ("RunCommand", "developer"),
     "AlteryxBasePluginsGui.Download.Download": ("Download", "developer"),
+    "AlteryxConnectorGui.Download.Download": ("Download", "developer"),  # alternate namespace
+    "AlteryxBasePluginsGui.Message.Message": ("Message", "developer"),
+    "AlteryxBasePluginsGui.Test.Test": ("Test", "developer"),
+    "AlteryxBasePluginsGui.BasicDataProfile.BasicDataProfile": ("BasicDataProfile", "developer"),
     # ── Spatial ─────────────────────────────────────────────────────────
     "AlteryxSpatialPluginsGui.Buffer.Buffer": ("Buffer", "spatial"),
     "AlteryxSpatialPluginsGui.SpatialMatch.SpatialMatch": ("SpatialMatch", "spatial"),
@@ -172,6 +184,7 @@ PLUGIN_NAME_MAP: dict[str, tuple[str, str]] = {
     "AlteryxSpatialPluginsGui.Geocoder.Geocoder": ("Geocoder", "spatial"),
     "AlteryxSpatialPluginsGui.TradeArea.TradeArea": ("TradeArea", "spatial"),
     "AlteryxSpatialPluginsGui.MakeGrid.MakeGrid": ("MakeGrid", "spatial"),
+    "AlteryxSpatialPluginsGui.SpatialInfo.SpatialInfo": ("SpatialInfo", "spatial"),
     # ── Reporting ───────────────────────────────────────────────────────
     "AlteryxReportingPluginsGui.Table.Table": ("Table", "reporting"),
     "AlteryxReportingPluginsGui.Layout.Layout": ("Layout", "reporting"),
@@ -209,9 +222,23 @@ PLUGIN_NAME_MAP: dict[str, tuple[str, str]] = {
     "AlteryxConnectorPluginsGui.AzureBlobOutput.AzureBlobOutput": ("AzureBlobOutput", "connectors"),
     "AlteryxConnectorPluginsGui.AzureBlobInput.AzureBlobInput": ("AzureBlobInput", "connectors"),
     "AlteryxConnectorPluginsGui.SharePointInput.SharePointInput": ("SharePointInput", "connectors"),
+    "AlteryxConnectorGui.MongoInput.MongoInput": ("MongoInput", "connectors"),
+    "DataverseInput": ("DataverseInput", "connectors"),  # versioned variants resolved via regex in node_parser
+    # ── Calgary (high-performance join/loader) ────────────────────────
+    "CalgaryPluginsGui.CalgaryJoin.CalgaryJoin": ("CalgaryJoin", "join"),
     # ── Reporting (additional) ────────────────────────────────────────
     "AlteryxReportingPluginsGui.Chart.Chart": ("Chart", "reporting"),
     "AlteryxReportingPluginsGui.InteractiveChart.InteractiveChart": ("InteractiveChart", "reporting"),
+    "AlteryxReportChartGui.AlteryxReportChartGui": ("ReportChart", "reporting"),
+    # ── Reporting (Portfolio / Composer) ───────────────────────────────
+    "PortfolioPluginsGui.ComposerText.PortfolioComposerText": ("ComposerText", "reporting"),
+    "PortfolioPluginsGui.ComposerTable.PortfolioComposerTable": ("ComposerTable", "reporting"),
+    "PortfolioPluginsGui.ComposerLayout.PortfolioComposerLayout": ("ComposerLayout", "reporting"),
+    "PortfolioPluginsGui.ComposerRender.PortfolioComposerRender": ("ComposerRender", "reporting"),
+    "PortfolioPluginsGui.ComposerImage.PortfolioComposerImage": ("ComposerImage", "reporting"),
+    "PortfolioPluginsGui.Email.Email": ("EmailOutput", "reporting"),
+    "ReportHeader": ("ReportHeader", "reporting"),
+    "PlotlyCharting": ("PlotlyCharting", "reporting"),
     # ── Predictive (supported) ─────────────────────────────────────────
     "AlteryxPredictivePluginsGui.DecisionTree.DecisionTree": ("DecisionTree", "predictive"),
     "AlteryxPredictivePluginsGui.ForestModel.ForestModel": ("ForestModel", "predictive"),
@@ -243,20 +270,36 @@ PLUGIN_NAME_MAP: dict[str, tuple[str, str]] = {
     "AlteryxPredictivePluginsGui.ModelCoefficients.ModelCoefficients": ("ModelCoefficients", "predictive"),
     "AlteryxPredictivePluginsGui.NestedTest.NestedTest": ("NestedTest", "predictive"),
     "AlteryxPredictivePluginsGui.TestOfMeans.TestOfMeans": ("TestOfMeans", "predictive"),
-    "AlteryxPredictivePluginsGui.VarianceInflationFactors.VarianceInflationFactors": ("VarianceInflationFactors", "predictive"),
+    "AlteryxPredictivePluginsGui.VarianceInflationFactors.VarianceInflationFactors": (
+        "VarianceInflationFactors",
+        "predictive",
+    ),
     "AlteryxPredictivePluginsGui.AppendCluster.AppendCluster": ("AppendCluster", "predictive"),
     "AlteryxPredictivePluginsGui.FindNearestNeighbors.FindNearestNeighbors": ("FindNearestNeighbors", "predictive"),
     "AlteryxPredictivePluginsGui.KCentroidsDiagnostics.KCentroidsDiagnostics": ("KCentroidsDiagnostics", "predictive"),
     "AlteryxPredictivePluginsGui.MBAffinity.MBAffinity": ("MBAffinity", "predictive"),
     "AlteryxPredictivePluginsGui.MBInspect.MBInspect": ("MBInspect", "predictive"),
     "AlteryxPredictivePluginsGui.MBRules.MBRules": ("MBRules", "predictive"),
-    "AlteryxPredictivePluginsGui.MultidimensionalScaling.MultidimensionalScaling": ("MultidimensionalScaling", "predictive"),
+    "AlteryxPredictivePluginsGui.MultidimensionalScaling.MultidimensionalScaling": (
+        "MultidimensionalScaling",
+        "predictive",
+    ),
     "AlteryxPredictivePluginsGui.Optimization.Optimization": ("Optimization", "predictive"),
     "AlteryxPredictivePluginsGui.SimulationSampling.SimulationSampling": ("SimulationSampling", "predictive"),
     "AlteryxPredictivePluginsGui.SimulationScoring.SimulationScoring": ("SimulationScoring", "predictive"),
     "AlteryxPredictivePluginsGui.SimulationSummary.SimulationSummary": ("SimulationSummary", "predictive"),
     "AlteryxPredictivePluginsGui.NetworkAnalysis.NetworkAnalysis": ("NetworkAnalysis", "predictive"),
     "AlteryxPredictivePluginsGui.TSForecast.TSForecast": ("TSForecast", "predictive"),
+    # ── Intelligence Suite / AutoML (standalone names) ────────────────
+    "AutoML": ("AutoML", "predictive"),
+    "Fit": ("Fit", "predictive"),
+    "Insights": ("Insights", "predictive"),
+    "Modeling": ("Modeling", "predictive"),
+    "Predict": ("Predict", "predictive"),
+    "Regression": ("Regression", "predictive"),
+    "Transformation": ("Transformation", "predictive"),
+    # ── Developer (additional) ────────────────────────────────────────
+    "JupyterCode": ("JupyterCode", "developer"),
 }
 
 
@@ -317,11 +360,6 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
         "deterministic",
         "Maps partitioned writes to partitionBy().save()",
         "DataFrame.write.partitionBy",
-    ),
-    "DynamicRename": ToolMetadata(
-        "unsupported",
-        "Renames fields based on a lookup or formula; requires manual conversion",
-        "withColumnRenamed",
     ),
     # ── Preparation ─────────────────────────────────────────────────────
     "Select": ToolMetadata(
@@ -534,6 +572,11 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
         "Maps SharePoint read to spark.read with connector",
         "SharePoint connector",
     ),
+    "DataverseInput": ToolMetadata(
+        "template",
+        "Stub Dataverse read; replace with Power Platform export, Fivetran/Airbyte, or OData ingest",
+        "spark.read (manual setup)",
+    ),
     # ── Third-party connectors (pattern-matched) ──────────────────────
     "PublishToTableauServer": ToolMetadata(
         "mapping",
@@ -605,7 +648,7 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
     "Tab": ToolMetadata(
         "unsupported",
         "Visual grouping tab for interface tools — no-op in Databricks",
-        "no-op (visual only)",
+        "no-op (skipped)",
     ),
     "RadioButton": ToolMetadata(
         "mapping",
@@ -636,7 +679,7 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
     "ToolContainer": ToolMetadata(
         "unsupported",
         "Visual grouping container — no data transformation; children are processed independently",
-        "no-op (visual only)",
+        "no-op (skipped)",
     ),
     # ── Workflow ─────────────────────────────────────────────────────────
     "BlockUntilDone": ToolMetadata(
@@ -695,221 +738,172 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
         "Maps grid creation to H3 polyfill or Mosaic grid functions",
         "H3 polyfill / Mosaic grid",
     ),
-    # ── Predictive ──────────────────────────────────────────────────────
-    "DecisionTree": ToolMetadata(
-        "mapping",
-        "Maps to Spark MLlib DecisionTreeClassifier/Regressor pipeline",
-        "MLlib DecisionTree",
-    ),
-    "ForestModel": ToolMetadata(
-        "mapping",
-        "Maps to Spark MLlib RandomForestClassifier/Regressor pipeline",
-        "MLlib RandomForest",
-    ),
-    "LinearRegression": ToolMetadata(
-        "mapping",
-        "Maps to Spark MLlib LinearRegression pipeline",
-        "MLlib LinearRegression",
-    ),
+    # ── Predictive (all are stubs requiring manual MLlib conversion) ────
+    "DecisionTree": ToolMetadata("stub", "Stub — needs Spark MLlib DecisionTree", "MLlib DecisionTree"),
+    "ForestModel": ToolMetadata("stub", "Stub — needs Spark MLlib RandomForest", "MLlib RandomForest"),
+    "LinearRegression": ToolMetadata("stub", "Stub — needs Spark MLlib LinearRegression", "MLlib LinearRegression"),
     "LogisticRegression": ToolMetadata(
-        "mapping",
-        "Maps to Spark MLlib LogisticRegression pipeline",
-        "MLlib LogisticRegression",
+        "stub", "Stub — needs Spark MLlib LogisticRegression", "MLlib LogisticRegression"
     ),
-    "ScoreModel": ToolMetadata(
-        "mapping",
-        "Maps to model.transform() for scoring with a trained model",
-        "MLlib model.transform",
+    "ScoreModel": ToolMetadata("stub", "Stub — needs MLlib model.transform()", "MLlib model.transform"),
+    "BoostedModel": ToolMetadata("stub", "Stub — needs Spark MLlib GBTClassifier/Regressor", "MLlib GBT"),
+    "NaiveBayes": ToolMetadata("stub", "Stub — needs Spark MLlib NaiveBayes", "MLlib NaiveBayes"),
+    "SupportVectorMachine": ToolMetadata("stub", "Stub — needs Spark MLlib LinearSVC", "MLlib LinearSVC"),
+    "NeuralNetwork": ToolMetadata("stub", "Stub — needs MLlib MultilayerPerceptronClassifier", "MLlib MLP"),
+    "GammaRegression": ToolMetadata("stub", "Stub — needs MLlib GLM (gamma family)", "MLlib GLM"),
+    "CountRegression": ToolMetadata("stub", "Stub — needs MLlib GLM (poisson family)", "MLlib GLM"),
+    "SplineModel": ToolMetadata("stub", "Stub — no direct MLlib equivalent", "Manual conversion"),
+    "Stepwise": ToolMetadata("stub", "Stub — needs MLlib ChiSqSelector", "MLlib ChiSqSelector"),
+    "KCentroids": ToolMetadata("stub", "Stub — needs Spark MLlib KMeans", "MLlib KMeans"),
+    "PrincipalComponents": ToolMetadata("stub", "Stub — needs Spark MLlib PCA", "MLlib PCA"),
+    "CrossValidation": ToolMetadata("stub", "Stub — needs MLlib CrossValidator", "MLlib CrossValidator"),
+    "ARIMA": ToolMetadata("stub", "Stub — needs Prophet / pandas UDF", "Prophet / pandas UDF"),
+    "ETS": ToolMetadata("stub", "Stub — needs Prophet / pandas UDF", "Prophet / pandas UDF"),
+    "ABAnalysis": ToolMetadata("stub", "Stub — needs pandas UDF with scipy.stats", "pandas UDF / scipy"),
+    "AppendCluster": ToolMetadata("stub", "Stub — needs MLlib KMeansModel.transform", "MLlib KMeans"),
+    "FindNearestNeighbors": ToolMetadata("stub", "Stub — needs MLlib BucketedRandomProjectionLSH", "MLlib LSH"),
+    "KCentroidsDiagnostics": ToolMetadata("stub", "Stub — needs MLlib ClusteringEvaluator", "MLlib evaluator"),
+    "LiftChart": ToolMetadata("stub", "Stub — needs binned prediction analysis", "PySpark aggregation"),
+    "ModelComparison": ToolMetadata("stub", "Stub — needs MLflow metric comparison", "MLflow"),
+    "ModelCoefficients": ToolMetadata("stub", "Stub — needs MLlib model.coefficients", "MLlib model"),
+    "TSForecast": ToolMetadata("stub", "Stub — needs Prophet / pandas UDF", "Prophet / pandas UDF"),
+    "TestOfMeans": ToolMetadata("stub", "Stub — needs pandas UDF with scipy.stats", "pandas UDF / scipy"),
+    "VarianceInflationFactors": ToolMetadata(
+        "stub", "Stub — needs pandas UDF with statsmodels VIF", "pandas UDF / statsmodels"
     ),
-    "BoostedModel": ToolMetadata(
-        "mapping",
-        "Maps to Spark MLlib GBTClassifier/Regressor pipeline",
-        "MLlib GBTClassifier/Regressor",
-    ),
-    "NaiveBayes": ToolMetadata(
-        "mapping",
-        "Maps to Spark MLlib NaiveBayes classifier pipeline",
-        "MLlib NaiveBayes",
-    ),
-    "SupportVectorMachine": ToolMetadata(
-        "mapping",
-        "Maps to Spark MLlib LinearSVC pipeline",
-        "MLlib LinearSVC",
-    ),
-    "NeuralNetwork": ToolMetadata(
-        "mapping",
-        "Maps to Spark MLlib MultilayerPerceptronClassifier pipeline",
-        "MLlib MultilayerPerceptronClassifier",
-    ),
-    "GammaRegression": ToolMetadata(
-        "mapping",
-        "Maps to Spark MLlib GeneralizedLinearRegression with gamma family",
-        "MLlib GLM (gamma)",
-    ),
-    "CountRegression": ToolMetadata(
-        "mapping",
-        "Maps to Spark MLlib GeneralizedLinearRegression with poisson family",
-        "MLlib GLM (poisson)",
-    ),
-    "SplineModel": ToolMetadata(
-        "mapping",
-        "Spline regression - passthrough stub with TODO for manual conversion",
-        "Manual (spline regression)",
-    ),
-    "Stepwise": ToolMetadata(
-        "mapping",
-        "Maps to Spark MLlib ChiSqSelector for feature selection",
-        "MLlib ChiSqSelector",
-    ),
-    "KCentroids": ToolMetadata(
-        "mapping",
-        "Maps to Spark MLlib KMeans clustering pipeline",
-        "MLlib KMeans",
-    ),
-    "PrincipalComponents": ToolMetadata(
-        "mapping",
-        "Maps to Spark MLlib PCA for dimensionality reduction",
-        "MLlib PCA",
-    ),
-    "CrossValidation": ToolMetadata(
-        "mapping",
-        "Maps to Spark MLlib CrossValidator for model evaluation",
-        "MLlib CrossValidator",
-    ),
-    "ARIMA": ToolMetadata(
-        "mapping",
-        "Time series ARIMA - passthrough stub referencing Prophet/pandas UDF",
-        "Prophet / pandas UDF",
-    ),
-    "ETS": ToolMetadata(
-        "mapping",
-        "Exponential smoothing ETS - passthrough stub referencing Prophet/pandas UDF",
-        "Prophet / pandas UDF",
-    ),
-    # ── Predictive (unsupported) ───────────────────────────────────────
-    "ABAnalysis": ToolMetadata(
-        "mapping",
-        "Maps A/B test analysis to pandas UDF with scipy.stats",
-        "pandas UDF / scipy.stats",
-    ),
+    # ── Predictive (unsupported — no converter) ──────────────────────
     "ABControls": ToolMetadata(
-        "unsupported",
-        "A/B test controls - no direct Databricks equivalent",
-        "Manual conversion",
+        "unsupported", "A/B test controls — no direct Databricks equivalent", "Manual conversion"
     ),
     "ABTreatments": ToolMetadata(
-        "unsupported",
-        "A/B test treatments - no direct Databricks equivalent",
-        "Manual conversion",
+        "unsupported", "A/B test treatments — no direct Databricks equivalent", "Manual conversion"
     ),
-    "ABTrend": ToolMetadata(
-        "unsupported",
-        "A/B trend analysis - no direct Databricks equivalent",
-        "Manual conversion",
-    ),
+    "ABTrend": ToolMetadata("unsupported", "A/B trend analysis — no direct Databricks equivalent", "Manual conversion"),
     "SurvivalAnalysis": ToolMetadata(
-        "unsupported",
-        "Survival analysis model - no direct MLlib equivalent",
-        "Manual conversion",
+        "unsupported", "Survival analysis — no direct MLlib equivalent", "Manual conversion"
     ),
     "SurvivalScore": ToolMetadata(
-        "unsupported",
-        "Score survival model - no direct MLlib equivalent",
-        "Manual conversion",
-    ),
-    "LiftChart": ToolMetadata(
-        "mapping",
-        "Maps lift chart computation to binned prediction analysis",
-        "PySpark binning + aggregation",
-    ),
-    "ModelComparison": ToolMetadata(
-        "mapping",
-        "Maps model comparison to MLflow metric comparison",
-        "MLflow model comparison",
-    ),
-    "ModelCoefficients": ToolMetadata(
-        "mapping",
-        "Maps coefficient extraction to MLlib model.coefficients access",
-        "MLlib model.coefficients",
+        "unsupported", "Score survival model — no direct MLlib equivalent", "Manual conversion"
     ),
     "NestedTest": ToolMetadata(
-        "unsupported",
-        "Nested model significance test - no direct Databricks equivalent",
-        "Manual conversion",
+        "unsupported", "Nested model significance test — no Databricks equivalent", "Manual conversion"
     ),
-    "TestOfMeans": ToolMetadata(
-        "mapping",
-        "Maps t-test / test of means to pandas UDF with scipy.stats.ttest",
-        "pandas UDF / scipy.stats",
-    ),
-    "VarianceInflationFactors": ToolMetadata(
-        "mapping",
-        "Maps VIF analysis to pandas UDF with statsmodels variance_inflation_factor",
-        "pandas UDF / statsmodels VIF",
-    ),
-    "AppendCluster": ToolMetadata(
-        "mapping",
-        "Maps cluster assignment append to MLlib KMeansModel.transform",
-        "MLlib KMeansModel.transform",
-    ),
-    "FindNearestNeighbors": ToolMetadata(
-        "mapping",
-        "Maps K-NN search to BucketedRandomProjectionLSH approximate NN",
-        "MLlib BucketedRandomProjectionLSH",
-    ),
-    "KCentroidsDiagnostics": ToolMetadata(
-        "mapping",
-        "Maps clustering diagnostics to ClusteringEvaluator silhouette score",
-        "MLlib ClusteringEvaluator",
-    ),
-    "MBAffinity": ToolMetadata(
-        "unsupported",
-        "Market basket affinity analysis - no direct Databricks equivalent",
-        "Manual conversion",
-    ),
+    "MBAffinity": ToolMetadata("unsupported", "Market basket affinity — no Databricks equivalent", "Manual conversion"),
     "MBInspect": ToolMetadata(
-        "unsupported",
-        "Market basket inspection - no direct Databricks equivalent",
-        "Manual conversion",
+        "unsupported", "Market basket inspection — no Databricks equivalent", "Manual conversion"
     ),
-    "MBRules": ToolMetadata(
-        "unsupported",
-        "Market basket association rules - no direct Databricks equivalent",
-        "Manual conversion",
-    ),
+    "MBRules": ToolMetadata("unsupported", "Market basket rules — no Databricks equivalent", "Manual conversion"),
     "MultidimensionalScaling": ToolMetadata(
-        "unsupported",
-        "MDS dimensionality reduction - no direct Databricks equivalent",
-        "Manual conversion",
+        "unsupported", "MDS — no direct Databricks equivalent", "Manual conversion"
     ),
     "Optimization": ToolMetadata(
-        "unsupported",
-        "Prescriptive optimization tool - no direct Databricks equivalent",
-        "Manual conversion",
+        "unsupported", "Prescriptive optimization — no Databricks equivalent", "Manual conversion"
     ),
     "SimulationSampling": ToolMetadata(
-        "unsupported",
-        "Monte Carlo simulation sampling - no direct Databricks equivalent",
-        "Manual conversion",
+        "unsupported", "Monte Carlo sampling — no Databricks equivalent", "Manual conversion"
     ),
     "SimulationScoring": ToolMetadata(
-        "unsupported",
-        "Monte Carlo simulation scoring - no direct Databricks equivalent",
-        "Manual conversion",
+        "unsupported", "Monte Carlo scoring — no Databricks equivalent", "Manual conversion"
     ),
     "SimulationSummary": ToolMetadata(
-        "unsupported",
-        "Monte Carlo simulation summary - no direct Databricks equivalent",
-        "Manual conversion",
+        "unsupported", "Monte Carlo summary — no Databricks equivalent", "Manual conversion"
     ),
     "NetworkAnalysis": ToolMetadata(
+        "unsupported", "Social network analysis — no Databricks equivalent", "Manual conversion"
+    ),
+    # ── Preparation (unsupported — recognized only, no converter) ─────────
+    "DynamicSelect": ToolMetadata(
         "unsupported",
-        "Social network analysis - no direct Databricks equivalent",
-        "Manual conversion",
+        "Dynamic column selection based on data type or pattern — needs manual conversion",
+        "DataFrame.select with colRegex",
     ),
-    "TSForecast": ToolMetadata(
-        "mapping",
-        "Maps time series forecast to Prophet / pandas UDF",
-        "Prophet / pandas UDF",
+    "DynamicReplace": ToolMetadata(
+        "unsupported",
+        "Dynamic column replacement via lookup table — needs manual conversion",
+        "join + coalesce",
     ),
+    "MakeGroup": ToolMetadata(
+        "unsupported",
+        "Groups records into sets — needs manual conversion",
+        "groupBy / Window",
+    ),
+    # ── Parse (unsupported — recognized only) ───────────────────────────
+    "FieldInfo": ToolMetadata(
+        "unsupported",
+        "Generates field metadata summary — no direct Databricks equivalent",
+        "DataFrame.schema / dtypes",
+    ),
+    "MakeColumns": ToolMetadata(
+        "unsupported",
+        "Creates columns from delimited name-value pairs — needs manual conversion",
+        "split + pivot",
+    ),
+    "BlobConvert": ToolMetadata(
+        "unsupported",
+        "Converts Blob data to/from string — needs manual conversion",
+        "encode / decode",
+    ),
+    "BlobInput": ToolMetadata(
+        "unsupported",
+        "Reads binary (Blob) files — needs manual conversion",
+        "spark.read.format('binaryFile')",
+    ),
+    # ── Developer (unsupported — recognized only) ───────────────────────
+    "Message": ToolMetadata(
+        "unsupported",
+        "Outputs messages to log — no converter; maps to print/logging",
+        "print / logging",
+    ),
+    "Test": ToolMetadata(
+        "unsupported",
+        "Validates data against expectations — no converter; maps to assert",
+        "assert / dlt.expect",
+    ),
+    "BasicDataProfile": ToolMetadata(
+        "unsupported",
+        "Profiles column data — no converter; maps to DataFrame.describe()",
+        "DataFrame.describe / dbutils.data.summarize",
+    ),
+    "JupyterCode": ToolMetadata(
+        "unsupported",
+        "Embeds Jupyter/Python code — needs manual migration to Databricks notebook",
+        "Databricks notebook cell",
+    ),
+    # ── Connectors (unsupported — recognized only) ──────────────────────
+    "MongoInput": ToolMetadata(
+        "unsupported",
+        "Reads from MongoDB — needs manual conversion to spark.read.format('mongodb')",
+        "spark.read.format('mongodb')",
+    ),
+    # ── Join (unsupported — recognized only) ────────────────────────────
+    "CalgaryJoin": ToolMetadata(
+        "unsupported",
+        "High-performance Calgary join — needs manual conversion to DataFrame.join",
+        "DataFrame.join",
+    ),
+    # ── Reporting (unsupported — recognized only) ───────────────────────
+    "ReportChart": ToolMetadata("unsupported", "Report chart — needs manual conversion", "display() / plotly"),
+    "ComposerText": ToolMetadata("unsupported", "Report text block — needs manual conversion", "display()"),
+    "ComposerTable": ToolMetadata("unsupported", "Report table — needs manual conversion", "display()"),
+    "ComposerLayout": ToolMetadata("unsupported", "Report layout container — needs manual conversion", "display()"),
+    "ComposerRender": ToolMetadata(
+        "unsupported", "Report render output — needs manual conversion", "display() / file write"
+    ),
+    "ComposerImage": ToolMetadata("unsupported", "Report image — needs manual conversion", "display()"),
+    "ReportHeader": ToolMetadata("unsupported", "Report header — needs manual conversion", "display()"),
+    "PlotlyCharting": ToolMetadata("unsupported", "Plotly chart — needs manual conversion", "display() / plotly"),
+    # ── Spatial (unsupported — recognized only) ─────────────────────────
+    "SpatialInfo": ToolMetadata(
+        "unsupported",
+        "Extracts spatial metadata from geometry — needs manual conversion",
+        "Mosaic st_envelope / st_area",
+    ),
+    # ── Intelligence Suite / AutoML ─────────────────────────────────────
+    "AutoML": ToolMetadata("stub", "Stub — needs Databricks AutoML", "Databricks AutoML"),
+    "Fit": ToolMetadata("stub", "Stub — model fit step; needs MLlib / AutoML", "MLlib / AutoML"),
+    "Insights": ToolMetadata("stub", "Stub — model insights; needs MLflow", "MLflow"),
+    "Modeling": ToolMetadata("stub", "Stub — modeling step; needs MLlib", "MLlib"),
+    "Predict": ToolMetadata("stub", "Stub — model prediction; needs MLlib model.transform", "MLlib model.transform"),
+    "Regression": ToolMetadata("stub", "Stub — regression modeling; needs MLlib regression", "MLlib regression"),
+    "Transformation": ToolMetadata("stub", "Stub — Intelligence Suite data transform; needs custom UDF", "Custom UDF"),
 }

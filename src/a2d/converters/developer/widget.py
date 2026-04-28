@@ -94,7 +94,5 @@ class WidgetConverter(ToolConverter):
             label=label,
             default_value=default_value,
             options=options,
-            conversion_notes=[
-                f"{parsed_node.tool_type}: UI widget maps to Databricks dbutils.widgets.{widget_type}()"
-            ],
+            conversion_notes=[f"{parsed_node.tool_type}: UI widget maps to Databricks dbutils.widgets.{widget_type}()"],
         )

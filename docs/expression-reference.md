@@ -1,4 +1,4 @@
-# Expression Function Reference
+# Expression Function Reference (141 functions)
 
 Complete reference of all Alteryx expression functions supported by the a2d expression engine, with their PySpark and Spark SQL equivalents.
 
@@ -38,7 +38,7 @@ Complete reference of all Alteryx expression functions supported by the a2d expr
 | `TrimLeft(s)` | `F.ltrim(s)` | `LTRIM(s)` | 1-2 | |
 | `TrimRight(s)` | `F.rtrim(s)` | `RTRIM(s)` | 1-2 | |
 | `Replace(s, find, repl)` | `F.regexp_replace(s, find, repl)` | `REGEXP_REPLACE(s, find, repl)` | 3 | |
-| `ReplaceFirst(s, find, repl)` | `F.regexp_replace(s, find, repl)` | `REGEXP_REPLACE(s, find, repl)` | 3 | PySpark replaces ALL occurrences by default; behavior differs |
+| `ReplaceFirst(s, find, repl)` | `F.when(F.locate(find, s) > 0, F.concat(...)).otherwise(s)` | `CASE WHEN LOCATE(find, s) > 0 THEN CONCAT(LEFT(s, ...), repl, SUBSTRING(s, ...)) ELSE s END` | 3 | Uses locate+concat to replace only the first occurrence (literal, not regex) |
 | `PadLeft(s, len, char)` | `F.lpad(s, len, char)` | `LPAD(s, len, char)` | 3 | |
 | `PadRight(s, len, char)` | `F.rpad(s, len, char)` | `RPAD(s, len, char)` | 3 | |
 | `Substring(s, start, len)` | `F.substring(s, (start) + 1, len)` | `SUBSTRING(s, (start) + 1, len)` | 3 | Alteryx is 0-indexed, Spark is 1-indexed |
@@ -84,11 +84,14 @@ Complete reference of all Alteryx expression functions supported by the a2d expr
 
 | Alteryx Function | PySpark Column Expression | Spark SQL | Args | Notes |
 |-----------------|--------------------------|-----------|------|-------|
-| `ToNumber(s)` | `(s).cast('double')` | `CAST(s AS DOUBLE)` | 1 | |
-| `ToInteger(s)` | `(s).cast('int')` | `CAST(s AS INT)` | 1 | |
+| `ToNumber(s)` | `F.try_cast(s, 'double')` | `TRY_CAST(s AS DOUBLE)` | 1 | Returns NULL on bad input (matches Alteryx); requires DBR 14+ / Spark 3.5+ |
+| `ToInteger(s)` | `F.try_cast(s, 'int')` | `TRY_CAST(s AS INT)` | 1 | Returns NULL on bad input |
 | `ToString(x)` | `(x).cast('string')` | `CAST(x AS STRING)` | 1-2 | Alteryx optional format arg not mapped |
-| `ToDate(s, fmt)` | `F.to_date(s, fmt)` | `TO_DATE(s, fmt)` | 1-2 | Format string may need Alteryx-to-Java conversion |
-| `ToDateTime(s, fmt)` | `F.to_timestamp(s, fmt)` | `TO_TIMESTAMP(s, fmt)` | 1-2 | |
+| `ToDate(s, fmt)` | `F.try_to_date(s, fmt)` | `TRY_TO_DATE(s, fmt)` | 1-2 | Format-string arg passed as a raw string (not wrapped in `F.col`); returns NULL on unparseable input |
+| `ToDateTime(s, fmt)` | `F.try_to_timestamp(s, fmt)` | `TRY_TO_TIMESTAMP(s, fmt)` | 1-2 | Format-string arg passed as a raw string; returns NULL on unparseable input |
+| `ToInt32(s)` | `F.try_cast(s, 'int')` | `TRY_CAST(s AS INT)` | 1 | Alteryx int alias |
+| `ToInt64(s)` | `F.try_cast(s, 'long')` | `TRY_CAST(s AS BIGINT)` | 1 | Alteryx long alias |
+| `ToDouble(s)` | `F.try_cast(s, 'double')` | `TRY_CAST(s AS DOUBLE)` | 1 | Alteryx double alias |
 | `CharToInt(s)` | `F.ascii(s)` | `ASCII(s)` | 1 | Returns ASCII code of first character |
 | `IntToChar(n)` | `F.chr(n)` | `CHR(n)` | 1 | |
 | `HexToNumber(s)` | `F.conv(s, 16, 10)` | `CONV(s, 16, 10)` | 1 | |
@@ -113,7 +116,7 @@ Complete reference of all Alteryx expression functions supported by the a2d expr
 | `DateTimeFormat(dt, fmt)` | `F.date_format(dt, fmt)` | `DATE_FORMAT(dt, fmt)` | 2 | |
 | `DateTimeParse(s, fmt)` | `F.to_timestamp(s, fmt)` | `TO_TIMESTAMP(s, fmt)` | 2 | |
 | `DateTimeTrim(dt, unit)` | `F.date_trunc(unit, dt)` | `DATE_TRUNC(unit, dt)` | 2 | Note: argument order differs from Alteryx |
-| `DateTimeFirstOfMonth(dt)` | `F.trunc(dt, 'month')` | `TRUNC(dt, 'month')` | 1 | |
+| `DateTimeFirstOfMonth()` | `F.trunc(F.current_date(), 'month')` | `TRUNC(CURRENT_DATE, 'month')` | 0 | Alteryx semantics: returns the first day of the current month (0-arg) |
 | `DateTimeDayOfWeek(dt)` | `F.dayofweek(dt)` | `DAYOFWEEK(dt)` | 1 | Spark returns 1=Sunday, Alteryx returns 1=Sunday |
 
 ---
@@ -130,6 +133,23 @@ Complete reference of all Alteryx expression functions supported by the a2d expr
 | `Coalesce(args...)` | `F.coalesce(args...)` | `COALESCE(args...)` | 1+ | Variable argument count |
 | `IIF(cond, true_val, false_val)` | `F.when(cond, true_val).otherwise(false_val)` | `CASE WHEN cond THEN true_val ELSE false_val END` | 3 | Inline if |
 | `IFNULL(x, default)` | `F.coalesce(x, default)` | `COALESCE(x, default)` | 2 | |
+
+---
+
+## Conditional / Lookup Functions
+
+| Alteryx Function | PySpark Column Expression | Spark SQL | Args | Notes |
+|-----------------|--------------------------|-----------|------|-------|
+| `Switch(val, def, v1, r1, ...)` | `F.when(val==v1, r1).when(...).otherwise(def)` | `CASE WHEN val=v1 THEN r1 ... ELSE def END` | 2+ | Variable pairs; special-cased in translators |
+| `IIF(cond, true, false)` | `F.when(cond, true_val).otherwise(false_val)` | `CASE WHEN cond THEN true ELSE false END` | 3 | Inline if |
+
+---
+
+## File Functions
+
+| Alteryx Function | PySpark Column Expression | Spark SQL | Args | Notes |
+|-----------------|--------------------------|-----------|------|-------|
+| `FileGetFileName(path)` | `F.element_at(F.split(path, r'[/\\\\]'), -1)` | `ELEMENT_AT(SPLIT(path, '[/\\\\]'), -1)` | 1 | Extracts filename from a file path |
 
 ---
 
@@ -281,7 +301,7 @@ Important cases where Alteryx and Spark behavior differs:
 | Function | Difference |
 |----------|-----------|
 | `Substring` | Alteryx uses 0-based indexing; Spark uses 1-based. The translator adds +1 to the start position. |
-| `ReplaceFirst` | Alteryx replaces only the first occurrence; PySpark `regexp_replace` replaces ALL occurrences. Manual post-processing may be needed. |
+| `ReplaceFirst` | Alteryx replaces only the first occurrence. The translator now correctly uses `locate`+`concat` to replace only the first match (literal, not regex). No manual post-processing needed. |
 | `LOG` | Alteryx `LOG` is natural log. Spark SQL uses `LN` for natural log (`LOG` defaults to base-10 in some SQL dialects). The translator maps to `LN`. |
 | `DateTimeDiff` | Alteryx supports arbitrary units (days, hours, months). PySpark `datediff` only returns days. The SQL version uses Databricks `DATEDIFF` with unit parameter. |
 | `DateTimeTrim` | Argument order is reversed: Alteryx is `DateTimeTrim(dt, unit)`, Spark is `date_trunc(unit, dt)`. The translator handles this swap. |
@@ -289,3 +309,5 @@ Important cases where Alteryx and Spark behavior differs:
 | `IsString` | Always returns `True` in Spark because all values can be cast to string. The Alteryx version checks the field's metadata type. |
 | `Trim` | Alteryx `Trim` can accept an optional second argument for the trim character. The PySpark mapping only handles the single-arg (whitespace) version. |
 | `ToString` | Alteryx `ToString` can accept a format string as a second argument for date formatting. The PySpark mapping only handles the single-arg version. |
+| `ToNumber` / `ToInteger` / `ToDate` / `ToDateTime` | Translated to `try_cast` / `try_to_date` / `try_to_timestamp` so unparseable input returns `NULL` (matches Alteryx) instead of throwing. Requires DBR 14+ / Spark 3.5+. Format-string arguments are passed as raw strings (the translator marks them via `raw_string_args` in the function registry) so `F.try_to_date(F.col("d"), "yyyy-MM-dd")` is emitted, not `F.try_to_date(F.col("d"), F.col("yyyy-MM-dd"))`. |
+| `DateTimeFirstOfMonth` | 0-arg in Alteryx (returns first-of-current-month). The translator emits `F.trunc(F.current_date(), 'month')` so the generated code runs without the user filling in a placeholder. |

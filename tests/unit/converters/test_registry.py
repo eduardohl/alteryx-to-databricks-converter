@@ -60,7 +60,7 @@ class TestToolMetadata:
         assert not missing, f"Missing metadata for: {missing}"
 
     def test_metadata_conversion_methods_valid(self):
-        valid_methods = {"deterministic", "expression-engine", "template", "mapping", "unsupported"}
+        valid_methods = {"deterministic", "expression-engine", "template", "mapping", "stub", "unsupported"}
         for tool_type, meta in TOOL_METADATA.items():
             assert meta.conversion_method in valid_methods, f"{tool_type} has invalid method: {meta.conversion_method}"
 

@@ -43,7 +43,5 @@ class MacroIOConverter(ToolConverter):
             default_value=default_value,
             question_text=question_text,
             data_type=data_type,
-            conversion_notes=[
-                f"{parsed_node.tool_type}: macro parameters map to Databricks notebook widgets."
-            ],
+            conversion_notes=[f"{parsed_node.tool_type}: macro parameters map to Databricks notebook widgets."],
         )

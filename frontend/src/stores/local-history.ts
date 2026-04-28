@@ -14,7 +14,7 @@ export interface LocalHistoryItem {
 
 interface LocalHistoryStore {
   items: LocalHistoryItem[];
-  add: (result: ConversionResult, format: string) => void;
+  add: (result: ConversionResult) => void;
   remove: (id: string) => void;
   get: (id: string) => LocalHistoryItem | undefined;
 }
@@ -41,18 +41,24 @@ function saveItems(items: LocalHistoryItem[]) {
 
 let idCounter = Date.now();
 
+function bestCoverage(result: ConversionResult): number | null {
+  const best = result.best_format ? result.formats[result.best_format] : null;
+  const cov = best?.stats.coverage_percentage;
+  return typeof cov === "number" ? cov : null;
+}
+
 export const useLocalHistoryStore = create<LocalHistoryStore>((set, get) => ({
   items: loadItems(),
 
-  add: (result, format) => {
+  add: (result) => {
     const item: LocalHistoryItem = {
       id: String(++idCounter),
       workflow_name: result.workflow_name,
-      output_format: format,
+      output_format: result.best_format || "multi",
       created_at: new Date().toISOString(),
       node_count: result.node_count,
       edge_count: result.edge_count,
-      coverage_percentage: (result.stats.coverage_percentage as number) ?? null,
+      coverage_percentage: bestCoverage(result),
       result,
     };
     const updated = [item, ...get().items].slice(0, MAX_ITEMS);

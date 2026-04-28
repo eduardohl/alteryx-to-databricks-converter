@@ -9,7 +9,7 @@ import { useHistory, useHistoryDetail, useDeleteConversion } from "@/hooks/use-h
 import { useLocalHistoryStore } from "@/stores/local-history";
 import { useToastStore } from "@/stores/toast";
 import { useConvertBridge } from "@/stores/convert-bridge";
-import { downloadAsZip } from "@/lib/download";
+import { downloadAllFormatsAsZip } from "@/lib/download";
 import type { HistoryListItem, ConversionResult } from "@/lib/api";
 import {
   Clock,
@@ -40,8 +40,10 @@ export function HistoryPage() {
   const { data: remoteData, isLoading, error: remoteError } = useHistory();
   const detail = useHistoryDetail(selectedSource === "remote" ? selectedId : null);
   const deleteMutation = useDeleteConversion();
-  const localHistory = useLocalHistoryStore();
-  const toast = useToastStore();
+  const localItems = useLocalHistoryStore((s) => s.items);
+  const localGet = useLocalHistoryStore((s) => s.get);
+  const localRemove = useLocalHistoryStore((s) => s.remove);
+  const addToast = useToastStore((s) => s.add);
   const setConvertHint = useConvertBridge((s) => s.setWorkflowName);
 
   const hasRemote = !remoteError && remoteData && remoteData.total > 0;
@@ -56,7 +58,7 @@ export function HistoryPage() {
       }
     }
 
-    for (const item of localHistory.items) {
+    for (const item of localItems) {
       items.push({
         id: item.id,
         workflow_name: item.workflow_name,
@@ -70,7 +72,7 @@ export function HistoryPage() {
     }
 
     return items;
-  }, [remoteData, localHistory.items]);
+  }, [remoteData, localItems]);
 
   // Filter + sort
   const filteredSorted = useMemo(() => {
@@ -102,7 +104,7 @@ export function HistoryPage() {
     let detailLoading = false;
 
     if (selectedSource === "local") {
-      const local = localHistory.get(selectedId);
+      const local = localGet(selectedId);
       if (local) detailResult = local.result;
     } else {
       detailResult = detail.data ?? null;
@@ -134,10 +136,10 @@ export function HistoryPage() {
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => downloadAsZip(detailResult!.files, detailResult!.workflow_name)}
+              onClick={() => downloadAllFormatsAsZip(detailResult!.formats, detailResult!.workflow_name)}
             >
               <Download className="h-4 w-4" />
-              Download ZIP
+              Download All (ZIP)
             </Button>
           </PageHeader>
           <ConversionResults result={detailResult} />
@@ -244,17 +246,31 @@ export function HistoryPage() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   transition={{ delay: Math.min(i * 0.02, 0.3) }}
-                  className="border-b border-[var(--border)] last:border-b-0 cursor-pointer hover:bg-[var(--bg-sidebar)]/50 transition-colors"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`View ${item.workflow_name} conversion`}
+                  className="border-b border-[var(--border)] last:border-b-0 cursor-pointer hover:bg-[var(--bg-sidebar)]/50 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ring)]"
                   onClick={() => {
                     setSelectedId(item.id);
                     setSelectedSource(item.source);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setSelectedId(item.id);
+                      setSelectedSource(item.source);
+                    }
                   }}
                 >
                   <td className="px-4 py-3 font-medium text-[var(--fg)]">
                     {item.workflow_name}
                   </td>
                   <td className="px-4 py-3">
-                    <Badge variant="secondary">{item.output_format}</Badge>
+                    <Badge variant="secondary">
+                      {item.output_format === "multi" || !item.output_format
+                        ? "all formats"
+                        : item.output_format}
+                    </Badge>
                   </td>
                   <td className="px-4 py-3 text-[var(--fg-muted)]">
                     <div className="flex items-center gap-1.5">
@@ -303,10 +319,21 @@ export function HistoryPage() {
 
       {/* Delete confirmation dialog */}
       {confirmDeleteId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setConfirmDeleteId(null)}>
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6 shadow-xl max-w-sm mx-4" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold text-[var(--fg)] mb-2">Delete conversion?</h3>
-            <p className="text-sm text-[var(--fg-muted)] mb-4">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setConfirmDeleteId(null)}
+          onKeyDown={(e) => { if (e.key === "Escape") setConfirmDeleteId(null); }}
+          role="presentation"
+        >
+          <div
+            role="alertdialog"
+            aria-labelledby="delete-dialog-title"
+            aria-describedby="delete-dialog-desc"
+            className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-6 shadow-xl max-w-sm mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="delete-dialog-title" className="text-sm font-semibold text-[var(--fg)] mb-2">Delete conversion?</h3>
+            <p id="delete-dialog-desc" className="text-sm text-[var(--fg-muted)] mb-4">
               This action cannot be undone. The conversion record will be permanently removed.
             </p>
             <div className="flex justify-end gap-2">
@@ -318,11 +345,11 @@ export function HistoryPage() {
                 size="sm"
                 onClick={() => {
                   if (confirmDeleteId.source === "local") {
-                    localHistory.remove(confirmDeleteId.id);
-                    toast.add("Conversion removed", "info");
+                    localRemove(confirmDeleteId.id);
+                    addToast("Conversion removed", "info");
                   } else {
                     deleteMutation.mutate(confirmDeleteId.id);
-                    toast.add("Conversion deleted", "info");
+                    addToast("Conversion deleted", "info");
                   }
                   setConfirmDeleteId(null);
                 }}

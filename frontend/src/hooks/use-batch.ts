@@ -4,21 +4,31 @@ import { useBatchStore } from "@/stores/batch";
 
 interface BatchParams {
   files: File[];
-  format: string;
   catalogName?: string;
   schemaName?: string;
   includeComments?: boolean;
+  includeExpressionAudit?: boolean;
+  includePerformanceHints?: boolean;
+  generateDdl?: boolean;
+  generateDab?: boolean;
+  expandMacros?: boolean;
 }
 
 export function useBatchConversion() {
-  const { startJob, connectWs } = useBatchStore();
+  const startJob = useBatchStore((s) => s.startJob);
+  const connectWs = useBatchStore((s) => s.connectWs);
 
   return useMutation<void, Error, BatchParams>({
-    mutationFn: async ({ files, format, catalogName, schemaName, includeComments }) => {
-      const { job_id, total_files } = await api.convertBatch(files, format, {
+    mutationFn: async ({ files, catalogName, schemaName, includeComments, includeExpressionAudit, includePerformanceHints, generateDdl, generateDab, expandMacros }) => {
+      const { job_id, total_files } = await api.convertBatch(files, {
         catalogName,
         schemaName,
         includeComments,
+        includeExpressionAudit,
+        includePerformanceHints,
+        generateDdl,
+        generateDab,
+        expandMacros,
       });
       startJob(job_id, total_files);
       connectWs(job_id);

@@ -20,7 +20,6 @@ const AnalyzePage = lazy(() => import("@/routes/analyze").then((m) => ({ default
 const ToolsPage = lazy(() => import("@/routes/tools").then((m) => ({ default: m.ToolsPage })));
 const AboutPage = lazy(() => import("@/routes/about").then((m) => ({ default: m.AboutPage })));
 const HistoryPage = lazy(() => import("@/routes/history").then((m) => ({ default: m.HistoryPage })));
-const MigrationPlanPage = lazy(() => import("@/routes/migration-plan").then((m) => ({ default: m.MigrationPlanPage })));
 const ValidatePage = lazy(() => import("@/routes/validate").then((m) => ({ default: m.ValidatePage })));
 const SettingsPage = lazy(() => import("@/routes/settings").then((m) => ({ default: m.SettingsPage })));
 
@@ -42,7 +41,7 @@ function RootLayout() {
       <Sidebar />
       <main className="lg:pl-60 min-h-screen">
         <div className="max-w-6xl mx-auto px-6 py-8 pt-16 lg:pt-8">
-          <ErrorBoundary>
+          <ErrorBoundary resetKey={key}>
             <PageTransition routeKey={key}>
               <Suspense fallback={<RouteLoading />}>
                 <Outlet />
@@ -65,7 +64,6 @@ const analyzeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/anal
 const toolsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/tools", component: ToolsPage });
 const aboutRoute = createRoute({ getParentRoute: () => rootRoute, path: "/about", component: AboutPage });
 const historyRoute = createRoute({ getParentRoute: () => rootRoute, path: "/history", component: HistoryPage });
-const migrationPlanRoute = createRoute({ getParentRoute: () => rootRoute, path: "/migration-plan", component: MigrationPlanPage });
 const validateRoute = createRoute({ getParentRoute: () => rootRoute, path: "/validate", component: ValidatePage });
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsPage });
 
@@ -77,7 +75,6 @@ const routeTree = rootRoute.addChildren([
   toolsRoute,
   aboutRoute,
   historyRoute,
-  migrationPlanRoute,
   validateRoute,
   settingsRoute,
 ]);

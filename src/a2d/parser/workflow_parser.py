@@ -46,7 +46,7 @@ class WorkflowParser:
             raise FileNotFoundError(f"Workflow file not found: {path}")
 
         if path.suffix.lower() not in (".yxmd", ".yxmc", ".yxwz"):
-            logger.warning(f"Unexpected file extension: {path.suffix}")
+            logger.warning("Unexpected file extension: %s", path.suffix)
 
         tree = etree.parse(str(path), _SAFE_PARSER)
         root = tree.getroot()
@@ -82,7 +82,7 @@ class WorkflowParser:
         # Detect macro references
         macro_refs = self._find_macro_references(nodes)
 
-        logger.info(f"Parsed {file_path}: {len(nodes)} nodes, {len(connections)} connections, version={version}")
+        logger.info("Parsed %s: %d nodes, %d connections, version=%s", file_path, len(nodes), len(connections), version)
 
         return ParsedWorkflow(
             file_path=file_path,

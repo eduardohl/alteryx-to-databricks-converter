@@ -9,13 +9,20 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from a2d.__about__ import __version__
-from server.routers import analyze, convert, health, history, tools, validate
-from server.services.batch import get_store
+from server.routers import (
+    analyze,
+    convert,
+    health,
+    history,
+    tools,
+    validate,
+)
 from server.services import history as history_service
+from server.services.batch import get_store
 from server.settings import settings
 from server.websocket import batch as ws_batch
 
@@ -25,10 +32,15 @@ logger = logging.getLogger("a2d.server")
 async def _evict_expired_jobs() -> None:
     """Periodically remove expired batch jobs."""
     while True:
-        await asyncio.sleep(300)  # every 5 minutes
-        count = get_store().evict_expired()
-        if count:
-            logger.info("Evicted %d expired batch jobs", count)
+        try:
+            await asyncio.sleep(300)  # every 5 minutes
+            count = get_store().evict_expired()
+            if count:
+                logger.info("Evicted %d expired batch jobs", count)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Error during job eviction")
 
 
 @asynccontextmanager
@@ -102,4 +114,23 @@ app.include_router(ws_batch.router)
 # Serve React build in production (after API routes so /api/* takes priority)
 _frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
 if _frontend_dist.exists():
-    app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="static")
+    _assets_dir = _frontend_dist / "assets"
+    if _assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
+
+    _index_html = _frontend_dist / "index.html"
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        # Don't swallow unknown API/WebSocket paths with HTML — let them 404 as JSON.
+        if full_path in {"api", "ws"} or full_path.startswith(("api/", "ws/")):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        # Real static file at root (favicon, theme-init.js, robots.txt, ...)
+        if full_path:
+            candidate = _frontend_dist / full_path
+            if candidate.is_file() and _frontend_dist in candidate.resolve().parents:
+                return FileResponse(candidate)
+        # Otherwise hand off to the SPA so client-side routing can handle the path
+        return FileResponse(_index_html)
+else:
+    logger.warning("frontend/dist not found — web UI disabled. Run 'make frontend' to build it.")

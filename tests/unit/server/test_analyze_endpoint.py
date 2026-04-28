@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 
 def test_analyze_single_file(client, simple_yxmd):
     resp = client.post(
@@ -26,11 +28,9 @@ def test_analyze_single_file(client, simple_yxmd):
 
 def test_analyze_multiple_files(client):
     fixtures = Path(__file__).parent.parent.parent / "fixtures" / "workflows"
-    files = []
-    for p in sorted(fixtures.glob("*.yxmd")):
-        files.append(("files", (p.name, p.read_bytes(), "application/xml")))
+    files = [("files", (p.name, p.read_bytes(), "application/xml")) for p in sorted(fixtures.glob("*.yxmd"))]
     if not files:
-        return  # skip if no fixtures
+        pytest.skip("no .yxmd fixtures found in tests/fixtures/workflows")
 
     resp = client.post("/api/analyze", files=files)
     assert resp.status_code == 200
