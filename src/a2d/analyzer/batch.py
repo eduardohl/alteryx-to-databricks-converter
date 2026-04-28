@@ -35,7 +35,7 @@ class BatchAnalyzer:
                 analysis = self._analyze_single(path)
                 results.append(analysis)
             except A2dError as e:
-                logger.error(f"Failed to analyze {path}: {e}")
+                logger.error("Failed to analyze %s: %s", path, e)
 
         return results
 
@@ -50,10 +50,21 @@ class BatchAnalyzer:
         for node in parsed.nodes:
             ir_node = ConverterRegistry.convert_node(node, config)
             dag.add_node(ir_node)
+        node_ids = set(dag.all_node_ids())
         for conn in parsed.connections:
+            src, dst = conn.origin.tool_id, conn.destination.tool_id
+            if src not in node_ids or dst not in node_ids:
+                missing = [nid for nid in (src, dst) if nid not in node_ids]
+                logger.warning(
+                    "Skipping edge %d→%d: node(s) %s not in graph",
+                    src,
+                    dst,
+                    missing,
+                )
+                continue
             dag.add_edge(
-                conn.origin.tool_id,
-                conn.destination.tool_id,
+                src,
+                dst,
                 conn.origin.anchor_name,
                 conn.destination.anchor_name,
             )

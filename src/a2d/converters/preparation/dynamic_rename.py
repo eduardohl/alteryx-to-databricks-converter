@@ -30,7 +30,6 @@ class DynamicRenameConverter(ToolConverter):
             position=parsed_node.position,
             rename_mode=rename_mode,
             conversion_notes=[
-                f"DynamicRename in {rename_mode} mode; "
-                "manual review recommended to verify column mapping."
+                f"DynamicRename in {rename_mode} mode; manual review recommended to verify column mapping."
             ],
         )

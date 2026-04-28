@@ -117,6 +117,9 @@ class WorkflowDAG:
         """
         return [self._graph.nodes[nid]["ir"] for nid in nx.topological_sort(self._graph)]
 
+    # Alias for backward compatibility
+    topological_sort = topological_order
+
     def get_source_nodes(self) -> list[IRNode]:
         """Return nodes with no incoming edges (sources / entry points)."""
         return [self._graph.nodes[nid]["ir"] for nid in self._graph.nodes if self._graph.in_degree(nid) == 0]
@@ -143,6 +146,10 @@ class WorkflowDAG:
         """Return a list of all node IDs."""
         return list(self._graph.nodes)
 
+    def all_edges(self) -> list[tuple[int, int, EdgeInfo]]:
+        """Return all edges as (source_id, target_id, EdgeInfo) tuples."""
+        return [(u, v, data["info"]) for u, v, data in self._graph.edges(data=True)]
+
     # ── Validation ──────────────────────────────────────────────────────
 
     def validate(self) -> list[str]:
@@ -167,11 +174,9 @@ class WorkflowDAG:
         # Disconnected components (exclude isolated annotation / widget-only nodes)
         components = self.get_connected_components()
         data_components = [
-            c for c in components
-            if not all(
-                isinstance(self._graph.nodes[nid]["ir"], (CommentNode, WidgetNode))
-                for nid in c
-            )
+            c
+            for c in components
+            if not all(isinstance(self._graph.nodes[nid]["ir"], (CommentNode, WidgetNode)) for nid in c)
         ]
         if len(data_components) > 1:
             issues.append(

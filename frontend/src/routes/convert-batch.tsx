@@ -1,7 +1,7 @@
 import { useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { PageHeader } from "@/components/layout/page-header";
 import { FileDropzone } from "@/components/shared/file-dropzone";
-import { FormatSelector } from "@/components/convert/format-selector";
 import { BatchProgress } from "@/components/convert/batch-progress";
 import { BatchResults } from "@/components/convert/batch-results";
 import { Button } from "@/components/ui/button";
@@ -15,49 +15,56 @@ import { Play, Loader2, RotateCcw, Download, XCircle, RefreshCcw } from "lucide-
 
 export function ConvertBatchPage() {
   const [files, setFiles] = useState<File[]>([]);
-  const settings = useSettingsStore();
-  const [format, setFormat] = useState(settings.format);
+  const catalogName = useSettingsStore((s) => s.catalogName);
+  const schemaName = useSettingsStore((s) => s.schemaName);
+  const includeComments = useSettingsStore((s) => s.includeComments);
+  const includeExpressionAudit = useSettingsStore((s) => s.includeExpressionAudit);
+  const includePerformanceHints = useSettingsStore((s) => s.includePerformanceHints);
+  const generateDdl = useSettingsStore((s) => s.generateDdl);
+  const generateDab = useSettingsStore((s) => s.generateDab);
+  const expandMacros = useSettingsStore((s) => s.expandMacros);
   const mutation = useBatchConversion();
-  const { status, jobId, fileResults, disconnect, reset } = useBatchStore();
-  const toast = useToastStore();
+  const status = useBatchStore((s) => s.status);
+  const jobId = useBatchStore((s) => s.jobId);
+  const fileResults = useBatchStore((s) => s.fileResults);
+  const disconnect = useBatchStore((s) => s.disconnect);
+  const reset = useBatchStore((s) => s.reset);
+  const addToast = useToastStore((s) => s.add);
   const [downloading, setDownloading] = useState(false);
 
   const handleCancel = () => {
     disconnect();
-    toast.add("Batch conversion cancelled", "info");
+    addToast("Batch conversion cancelled", "info");
     reset();
     setFiles([]);
     mutation.reset();
   };
 
   const failedFiles = fileResults.filter((fr) => !fr.success);
+  const convertOpts = {
+    catalogName,
+    schemaName,
+    includeComments,
+    includeExpressionAudit,
+    includePerformanceHints,
+    generateDdl,
+    generateDab,
+    expandMacros,
+  };
   const handleRetryFailed = () => {
     if (failedFiles.length === 0) return;
-    // Filter original files to only those that failed
     const failedNames = new Set(failedFiles.map((fr) => fr.file_name));
     const retryFiles = files.filter((f) => failedNames.has(f.name));
     if (retryFiles.length > 0) {
       reset();
       mutation.reset();
-      mutation.mutate({
-        files: retryFiles,
-        format,
-        catalogName: settings.catalogName,
-        schemaName: settings.schemaName,
-        includeComments: settings.includeComments,
-      });
+      mutation.mutate({ files: retryFiles, ...convertOpts });
     }
   };
 
   const handleConvert = () => {
     if (files.length === 0) return;
-    mutation.mutate({
-      files,
-      format,
-      catalogName: settings.catalogName,
-      schemaName: settings.schemaName,
-      includeComments: settings.includeComments,
-    });
+    mutation.mutate({ files, ...convertOpts });
   };
 
   const handleReset = () => {
@@ -72,9 +79,9 @@ export function ConvertBatchPage() {
     try {
       const blob = await api.batchDownload(jobId);
       saveAs(blob, `batch-${jobId}.zip`);
-      toast.add("Batch download started", "success");
+      addToast("Batch download started", "success");
     } catch {
-      toast.add("Download failed", "error");
+      addToast("Download failed", "error");
     } finally {
       setDownloading(false);
     }
@@ -84,7 +91,7 @@ export function ConvertBatchPage() {
     <div className="space-y-6">
       <PageHeader
         title="Batch Convert"
-        description="Upload multiple .yxmd files for batch conversion with real-time progress"
+        description="Upload multiple .yxmd files for batch conversion in all supported formats with real-time progress"
       >
         {status === "running" && (
           <Button variant="destructive" size="sm" onClick={handleCancel}>
@@ -124,7 +131,6 @@ export function ConvertBatchPage() {
         <>
           <FileDropzone files={files} onFilesChange={setFiles} multiple />
           <div className="flex items-center gap-3">
-            <FormatSelector value={format} onChange={setFormat} />
             <Button
               onClick={handleConvert}
               disabled={files.length === 0 || mutation.isPending}
@@ -138,9 +144,9 @@ export function ConvertBatchPage() {
             </Button>
           </div>
           <p className="text-xs text-[var(--fg-muted)]">
-            Catalog: {settings.catalogName}.{settings.schemaName}
+            Catalog: {catalogName}.{schemaName}
             {" | "}
-            <a href="/settings" className="underline hover:text-[var(--fg)]">Change settings</a>
+            <Link to="/settings" className="underline hover:text-[var(--fg)]">Change settings</Link>
           </p>
         </>
       )}

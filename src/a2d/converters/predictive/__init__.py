@@ -1,66 +1,8 @@
 """Predictive/ML tool converters.
 
-Importing this package triggers registration of all predictive converters.
+Importing this package triggers registration of the generic predictive converter.
 """
 
-from a2d.converters.predictive import (
-    ab_analysis,
-    append_cluster,
-    arima,
-    boosted_model,
-    count_regression,
-    cross_validation,
-    decision_tree,
-    ets,
-    find_nearest_neighbors,
-    forest_model,
-    gamma_regression,
-    k_centroids,
-    k_centroids_diagnostics,
-    lift_chart,
-    linear_regression,
-    logistic_regression,
-    model_coefficients,
-    model_comparison,
-    naive_bayes,
-    neural_network,
-    principal_components,
-    score_model,
-    spline_model,
-    stepwise,
-    support_vector_machine,
-    test_of_means,
-    ts_forecast,
-    variance_inflation_factors,
-)
+from a2d.converters.predictive import generic
 
-__all__ = [
-    "ab_analysis",
-    "append_cluster",
-    "arima",
-    "boosted_model",
-    "count_regression",
-    "cross_validation",
-    "decision_tree",
-    "ets",
-    "find_nearest_neighbors",
-    "forest_model",
-    "gamma_regression",
-    "k_centroids",
-    "k_centroids_diagnostics",
-    "lift_chart",
-    "linear_regression",
-    "logistic_regression",
-    "model_coefficients",
-    "model_comparison",
-    "naive_bayes",
-    "neural_network",
-    "principal_components",
-    "score_model",
-    "spline_model",
-    "stepwise",
-    "support_vector_machine",
-    "test_of_means",
-    "ts_forecast",
-    "variance_inflation_factors",
-]
+__all__ = ["generic"]

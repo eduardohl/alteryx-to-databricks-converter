@@ -51,3 +51,12 @@ body {
   background: var(--border);
   border-radius: 3px;
 }
+
+/* Flash highlight when navigating to a code line from the workflow graph */
+@keyframes a2d-line-flash {
+  0% { background-color: rgba(59, 130, 246, 0.45); }
+  100% { background-color: transparent; }
+}
+.a2d-line-flash {
+  animation: a2d-line-flash 1.2s ease-out;
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Copy, Check, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getHighlighter } from "@/lib/shiki";
@@ -10,13 +10,28 @@ interface CodeBlockProps {
   code: string;
   language: string;
   filename?: string;
+  highlightLine?: number;
 }
 
-export function CodeBlock({ code, language, filename }: CodeBlockProps) {
+export function CodeBlock({ code, language, filename, highlightLine }: CodeBlockProps) {
   const [html, setHtml] = useState("");
   const [copied, setCopied] = useState(false);
   const [showLines, setShowLines] = useState(true);
-  const { theme } = useThemeStore();
+  const theme = useThemeStore((s) => s.theme);
+  const blockId = useId();
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!highlightLine || !containerRef.current) return;
+    const target = containerRef.current.querySelector<HTMLDivElement>(
+      `[data-line="${highlightLine}"]`,
+    );
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.classList.add("a2d-line-flash");
+    const t = setTimeout(() => target.classList.remove("a2d-line-flash"), 1200);
+    return () => clearTimeout(t);
+  }, [highlightLine, html]);
 
   useEffect(() => {
     let mounted = true;
@@ -89,10 +104,12 @@ export function CodeBlock({ code, language, filename }: CodeBlockProps) {
       </div>
       {/* Code */}
       {showLines ? (
-        <div className="overflow-auto max-h-[600px] text-sm flex">
+        <div ref={containerRef} className="overflow-auto max-h-[60vh] text-sm flex">
           <div className="select-none text-right pr-3 pl-3 py-4 text-[var(--fg-muted)]/40 font-mono text-xs leading-[1.7] border-r border-[var(--border)] bg-[var(--bg-sidebar)]/50 shrink-0">
             {code.split("\n").map((_, i) => (
-              <div key={i}>{i + 1}</div>
+              <div key={i} data-line={i + 1} id={`${blockId}-l${i + 1}`}>
+                {i + 1}
+              </div>
             ))}
           </div>
           <div
@@ -102,7 +119,8 @@ export function CodeBlock({ code, language, filename }: CodeBlockProps) {
         </div>
       ) : (
         <div
-          className="overflow-auto max-h-[600px] text-sm [&_pre]:!bg-transparent [&_pre]:p-4 [&_pre]:m-0"
+          ref={containerRef}
+          className="overflow-auto max-h-[60vh] text-sm [&_pre]:!bg-transparent [&_pre]:p-4 [&_pre]:m-0"
           dangerouslySetInnerHTML={{ __html: html }}
         />
       )}

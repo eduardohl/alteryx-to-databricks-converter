@@ -14,6 +14,7 @@ from a2d.expressions.ast import (
     ComparisonOp,
     Expr,
     FieldRef,
+    FunctionCall,
     IfExpr,
     InExpr,
     Literal,
@@ -114,3 +115,6 @@ class BaseExpressionTranslator(ABC):
 
     @abstractmethod
     def _visit_InExpr(self, node: InExpr) -> str: ...
+
+    @abstractmethod
+    def _visit_FunctionCall(self, node: FunctionCall) -> str: ...

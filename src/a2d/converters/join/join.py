@@ -41,7 +41,7 @@ def _parse_join_keys(cfg: dict) -> list[JoinKey]:
             elif conn == "Right":
                 right_fields.append(field_name)
         keys: list[JoinKey] = []
-        for lf, rf in zip(left_fields, right_fields):
+        for lf, rf in zip(left_fields, right_fields, strict=False):
             if lf and rf:
                 keys.append(JoinKey(left_field=lf, right_field=rf))
         return keys

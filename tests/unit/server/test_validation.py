@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
+from fastapi import HTTPException
 from server.utils.validation import sanitize_filename
 
 
@@ -43,9 +46,6 @@ class TestReadUpload:
     @pytest.mark.asyncio
     async def test_rejects_oversized_file(self):
         """Files exceeding max size should raise HTTPException 413."""
-        from unittest.mock import AsyncMock
-
-        from fastapi import HTTPException
         from server.utils.validation import read_upload
 
         mock_file = AsyncMock()

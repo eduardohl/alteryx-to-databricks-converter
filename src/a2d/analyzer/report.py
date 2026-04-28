@@ -177,9 +177,7 @@ class ReportGenerator:
             meta = TOOL_METADATA.get(tool_type)
             method = meta.conversion_method if meta else "-"
             method_color = _method_colors.get(method, "#999")
-            method_badge = (
-                f'<span class="badge" style="background:{method_color};color:#fff">{method}</span>'
-            )
+            method_badge = f'<span class="badge" style="background:{method_color};color:#fff">{method}</span>'
             tool_rows += f"""
             <tr>
                 <td>{tool_type}</td>

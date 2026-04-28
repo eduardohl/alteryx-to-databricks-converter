@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "alteryx2databricks"
-version = "0.3.0"
-description = "Alteryx to Databricks migration accelerator - parse .yxmd workflows and generate PySpark, DLT, and SQL"
+version = "2.0.0"
+description = "Alteryx to Databricks migration accelerator - parse .yxmd workflows and generate PySpark, DLT, SQL, and Lakeflow Designer code"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["alteryx", "databricks", "migration", "pyspark", "etl"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Code Generators",
     "Programming Language :: Python :: 3.10",
@@ -24,7 +24,6 @@ classifiers = [
 dependencies = [
     "lxml>=5.0",
     "networkx>=3.0",
-    "jinja2>=3.1",
     "typer>=0.12",
     "rich>=13.0",
     "sqlglot>=25.0",
@@ -40,10 +39,13 @@ server = [
 ]
 history = [
     "alteryx2databricks[server]",
-    "psycopg[binary]>=3.1",
+    "psycopg[binary]>=3.2",
 ]
-streamlit = [
-    "streamlit>=1.40.0",
+lakebase = [
+    "alteryx2databricks[server]",
+    "psycopg[binary]>=3.2",
+    "psycopg_pool>=3.2",
+    "databricks-sdk>=0.105.0",
 ]
 validation = [
     "datacompy>=0.12",
@@ -61,8 +63,13 @@ dev = [
     "pre-commit>=3.7",
 ]
 all = [
-    "alteryx2databricks[server,streamlit,validation,dev]",
+    "alteryx2databricks[server,validation,dev]",
 ]
+
+[project.urls]
+Documentation = "https://github.com/databricks/alteryx-converter#readme"
+Changelog = "https://github.com/databricks/alteryx-converter/blob/main/CHANGELOG.md"
+Issues = "https://github.com/databricks/alteryx-converter/issues"
 
 [project.scripts]
 a2d = "a2d.cli:app"
@@ -74,6 +81,7 @@ packages = ["src/a2d"]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
 addopts = "-v --tb=short --cov=a2d --cov-report=term-missing"
+asyncio_mode = "strict"
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",

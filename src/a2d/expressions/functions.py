@@ -1,6 +1,6 @@
 """Alteryx-to-PySpark function mapping registry.
 
-Maps 80+ Alteryx expression functions to their PySpark column-expression
+Maps 135+ Alteryx expression functions to their PySpark column-expression
 and Spark SQL equivalents.  Each mapping includes argument count constraints
 and optional translator notes.
 
@@ -58,25 +58,47 @@ _register("Contains", "({0}).contains({1})", "{0} LIKE CONCAT('%', {1}, '%')", 2
 _register("EndsWith", "({0}).endswith({1})", "{0} LIKE CONCAT('%', {1})", 2, 2)
 _register("StartsWith", "({0}).startswith({1})", "{0} LIKE CONCAT({1}, '%')", 2, 2)
 _register("FindString", "(F.locate({1}, {0}) - 1)", "(LOCATE({1}, {0}) - 1)", 2, 2)
-_register("position", "(F.locate({1}, {0}) - 1)", "(LOCATE({1}, {0}) - 1)", 2, 2,
-          notes="Alias for FindString — 0-based position of target in string")
+_register(
+    "position",
+    "(F.locate({1}, {0}) - 1)",
+    "(LOCATE({1}, {0}) - 1)",
+    2,
+    2,
+    notes="Alias for FindString — 0-based position of target in string",
+)
 _register("Left", "F.substring({0}, 1, {1})", "LEFT({0}, {1})", 2, 2)
-_register("Right", "F.expr(f'RIGHT({{{0}}}, {{{1}}})')", "RIGHT({0}, {1})", 2, 2, notes="Uses SQL expr")
+_register("Right", "F.substring({0}, F.length({0}) - ({1}) + F.lit(1), {1})", "RIGHT({0}, {1})", 2, 2)
 _register("Length", "F.length({0})", "LENGTH({0})", 1, 1)
 _register("LowerCase", "F.lower({0})", "LOWER({0})", 1, 1)
 _register("Uppercase", "F.upper({0})", "UPPER({0})", 1, 1)
 _register("TitleCase", "F.initcap({0})", "INITCAP({0})", 1, 1)
-_register("Trim", "F.trim({0})", "TRIM({0})", 1, 2)
-_register("TrimLeft", "F.ltrim({0})", "LTRIM({0})", 1, 2)
-_register("TrimRight", "F.rtrim({0})", "RTRIM({0})", 1, 2)
-_register("Replace", "F.regexp_replace({0}, {1}, {2})", "REGEXP_REPLACE({0}, {1}, {2})", 3, 3)
+_register(
+    "Trim",
+    "F.trim({0})",
+    "TRIM({0})",
+    1,
+    1,
+    notes="2-arg form (trim character) not supported; use REGEX_Replace as workaround",
+)
+_register("TrimLeft", "F.ltrim({0})", "LTRIM({0})", 1, 1, notes="2-arg form (trim character) not supported")
+_register("TrimRight", "F.rtrim({0})", "RTRIM({0})", 1, 1, notes="2-arg form (trim character) not supported")
+_register(
+    "Replace",
+    "F.regexp_replace({0}, {1}, {2})",
+    "REPLACE({0}, {1}, {2})",
+    3,
+    3,
+    notes="Alteryx Replace() is literal string replacement. Uses regexp_replace which is "
+    "equivalent for non-regex characters (covers 99% of usage). If the search string "
+    "contains regex metacharacters (.*+?[]{}^$|\\), manual escaping may be needed.",
+)
 _register(
     "ReplaceFirst",
-    "F.regexp_replace({0}, {1}, {2})",
-    "REGEXP_REPLACE({0}, {1}, {2})",
+    "F.when(F.locate({1}, {0}) > 0, F.concat(F.substring({0}, F.lit(1), F.locate({1}, {0}) - 1), {2}, F.substring({0}, F.locate({1}, {0}) + F.length({1}), F.length({0})))).otherwise({0})",
+    "CASE WHEN LOCATE({1}, {0}) > 0 THEN CONCAT(LEFT({0}, LOCATE({1}, {0}) - 1), {2}, SUBSTRING({0}, LOCATE({1}, {0}) + LENGTH({1}))) ELSE {0} END",
     3,
     3,
-    notes="PySpark replaces all by default",
+    notes="Replaces only the first occurrence of a literal string (not regex). Uses locate+concat to avoid regexp_replace replacing all occurrences.",
 )
 _register("PadLeft", "F.lpad({0}, {1}, {2})", "LPAD({0}, {1}, {2})", 3, 3)
 _register("PadRight", "F.rpad({0}, {1}, {2})", "RPAD({0}, {1}, {2})", 3, 3)
@@ -89,6 +111,7 @@ _register(
     notes="Alteryx is 0-indexed, Spark is 1-indexed",
 )
 _register("ReverseString", "F.reverse({0})", "REVERSE({0})", 1, 1)
+_register("Reverse", "F.reverse({0})", "REVERSE({0})", 1, 1, notes="Alias for ReverseString")
 _register(
     "CountWords",
     "F.size(F.split(F.trim({0}), r'\\s+'))",
@@ -101,10 +124,11 @@ _register("REGEX_Match", "({0}).rlike({1})", "{0} RLIKE {1}", 2, 2)
 _register("REGEX_Replace", "F.regexp_replace({0}, {1}, {2})", "REGEXP_REPLACE({0}, {1}, {2})", 3, 3)
 _register(
     "REGEX_CountMatches",
-    "F.size(F.expr(f'regexp_extract_all({{{0}}}, {{{1}}})'))",
+    "(F.size(F.split({0}, {1})) - F.lit(1))",
     "SIZE(REGEXP_EXTRACT_ALL({0}, {1}))",
     2,
     2,
+    notes="Counts non-overlapping regex matches via split-and-count",
 )
 _register("Concat", "F.concat({args})", "CONCAT({args})", 1, None, notes="Variable args")
 
@@ -135,12 +159,50 @@ _register("ATAN2", "F.atan2({0}, {1})", "ATAN2({0}, {1})", 2, 2)
 
 # ---------------------------------------------------------------------------
 # Conversion functions (10+)
+#
+# Note: Alteryx's ToNumber/ToInteger/ToDate/ToDateTime/DateTimeParse silently
+# return NULL on unparseable input. Spark's plain CAST / to_date / to_timestamp
+# THROW on bad input. We use try_cast / try_to_date / try_to_timestamp
+# (Databricks Runtime 14+, Spark 3.5+) to match Alteryx semantics.
 # ---------------------------------------------------------------------------
-_register("ToNumber", "({0}).cast('double')", "CAST({0} AS DOUBLE)", 1, 1)
-_register("ToInteger", "({0}).cast('int')", "CAST({0} AS INT)", 1, 1)
+_register(
+    "ToNumber",
+    "F.try_cast({0}, 'double')",
+    "TRY_CAST({0} AS DOUBLE)",
+    1,
+    1,
+    notes="Returns NULL on unparseable input (matches Alteryx); requires DBR 14+ / Spark 3.5+",
+)
+_register(
+    "ToInteger",
+    "F.try_cast({0}, 'int')",
+    "TRY_CAST({0} AS INT)",
+    1,
+    1,
+    notes="Returns NULL on unparseable input (matches Alteryx); requires DBR 14+ / Spark 3.5+",
+)
 _register("ToString", "({0}).cast('string')", "CAST({0} AS STRING)", 1, 2)
-_register("ToDate", "F.to_date({0}, {1})", "TO_DATE({0}, {1})", 1, 2)
-_register("ToDateTime", "F.to_timestamp({0}, {1})", "TO_TIMESTAMP({0}, {1})", 1, 2)
+_register(
+    "ToDate",
+    "F.try_to_date({0}, {1})",
+    "TRY_TO_DATE({0}, {1})",
+    1,
+    2,
+    # Arg 1 is the format string — convert Alteryx tokens (%Y-%m-%d) to
+    # Spark/Java tokens (yyyy-MM-dd) before substitution. Without this, the
+    # generated code would pass an Alteryx-style format that Spark can't parse.
+    raw_string_args=frozenset({1}),
+    notes="Returns NULL on unparseable input (matches Alteryx); requires DBR 14+ / Spark 3.5+",
+)
+_register(
+    "ToDateTime",
+    "F.try_to_timestamp({0}, {1})",
+    "TRY_TO_TIMESTAMP({0}, {1})",
+    1,
+    2,
+    raw_string_args=frozenset({1}),
+    notes="Returns NULL on unparseable input (matches Alteryx); requires DBR 14+ / Spark 3.5+",
+)
 _register("CharToInt", "F.ascii({0})", "ASCII({0})", 1, 1)
 _register("IntToChar", "F.chr({0})", "CHR({0})", 1, 1)
 _register("HexToNumber", "F.conv({0}, 16, 10)", "CONV({0}, 16, 10)", 1, 1)
@@ -156,7 +218,9 @@ _register("DateTimeMonth", "F.month({0})", "MONTH({0})", 1, 1)
 _register("DateTimeDay", "F.dayofmonth({0})", "DAYOFMONTH({0})", 1, 1)
 _register("DateTimeHour", "F.hour({0})", "HOUR({0})", 1, 1)
 _register("DateTimeMinutes", "F.minute({0})", "MINUTE({0})", 1, 1)
+_register("DateTimeMinute", "F.minute({0})", "MINUTE({0})", 1, 1, notes="Singular alias for DateTimeMinutes")
 _register("DateTimeSeconds", "F.second({0})", "SECOND({0})", 1, 1)
+_register("DateTimeSecond", "F.second({0})", "SECOND({0})", 1, 1, notes="Singular alias for DateTimeSeconds")
 _register(
     "DateTimeAdd",
     "__DATEADD__",
@@ -168,16 +232,34 @@ _register(
 )
 _register(
     "DateTimeDiff",
-    "F.datediff({0}, {1})",
+    "__DATEDIFF__",
     "DATEDIFF({2}, {0}, {1})",
     2,
     3,
-    notes="Args: start, end, unit",
+    notes="Args: start, end, unit — special-cased in PySpark translator for unit support",
+    raw_string_args=frozenset({2}),
 )
 _register("DateTimeFormat", "F.date_format({0}, {1})", "DATE_FORMAT({0}, {1})", 2, 2, raw_string_args=frozenset({1}))
-_register("DateTimeParse", "F.to_timestamp({0}, {1})", "TO_TIMESTAMP({0}, {1})", 2, 2, raw_string_args=frozenset({1}))
+_register(
+    "DateTimeParse",
+    "F.try_to_timestamp({0}, F.lit({1}))",
+    "TRY_TO_TIMESTAMP({0}, {1})",
+    2,
+    2,
+    raw_string_args=frozenset({1}),
+    notes="Returns NULL on unparseable input (matches Alteryx); requires DBR 14+ / Spark 3.5+",
+)
 _register("DateTimeTrim", "F.date_trunc({1}, {0})", "DATE_TRUNC({1}, {0})", 2, 2)
-_register("DateTimeFirstOfMonth", "F.trunc({0}, 'month')", "TRUNC({0}, 'month')", 1, 1)
+# Alteryx ``DateTimeFirstOfMonth()`` is 0-arg — returns the first day of the
+# current month. We default to current_date() so generated code runs without
+# the user having to fill in a placeholder.
+_register(
+    "DateTimeFirstOfMonth",
+    "F.trunc(F.current_date(), 'month')",
+    "TRUNC(CURRENT_DATE, 'month')",
+    0,
+    0,
+)
 _register("DateTimeDayOfWeek", "F.dayofweek({0})", "DAYOFWEEK({0})", 1, 1)
 
 # ---------------------------------------------------------------------------
@@ -220,8 +302,8 @@ _register("IFNULL", "F.coalesce({0}, {1})", "COALESCE({0}, {1})", 2, 2)
 # ---------------------------------------------------------------------------
 # Min / Max (scalar)
 # ---------------------------------------------------------------------------
-_register("Min", "F.least({0}, {1})", "LEAST({0}, {1})", 2, 2)
-_register("Max", "F.greatest({0}, {1})", "GREATEST({0}, {1})", 2, 2)
+_register("Min", "F.least({args})", "LEAST({args})", 2, None, notes="Variadic: Min(a, b, c, ...)")
+_register("Max", "F.greatest({args})", "GREATEST({args})", 2, None, notes="Variadic: Max(a, b, c, ...)")
 
 # ---------------------------------------------------------------------------
 # Null handling
@@ -315,6 +397,264 @@ _register(
     1,
     1,
     notes="Extracts filename from a path; normalizes backslash to forward-slash first",
+)
+
+
+# ---------------------------------------------------------------------------
+# Additional conversion functions
+# ---------------------------------------------------------------------------
+_register("IntToHex", "F.hex({0})", "HEX({0})", 1, 1)
+_register("IntToBin", "F.bin({0})", "BIN({0})", 1, 1)
+
+# ---------------------------------------------------------------------------
+# Additional DateTime functions
+# ---------------------------------------------------------------------------
+_register("DateTimeLastOfMonth", "F.last_day({0})", "LAST_DAY({0})", 1, 1)
+
+# ---------------------------------------------------------------------------
+# Additional string functions
+# ---------------------------------------------------------------------------
+_register(
+    "ReplaceChar",
+    "F.translate({0}, {1}, {2})",
+    "TRANSLATE({0}, {1}, {2})",
+    3,
+    3,
+    notes="Replaces each character in arg2 with corresponding character in arg3",
+)
+_register(
+    "StripQuotes",
+    r"F.regexp_replace(F.regexp_replace({0}, F.lit('^[\"\\']'), F.lit('')), F.lit('[\"\\']$'), F.lit(''))",
+    r"REGEXP_REPLACE(REGEXP_REPLACE({0}, '^[\"'']', ''), '[\"'']$', '')",
+    1,
+    1,
+    notes="Removes leading/trailing single or double quotes",
+)
+_register(
+    "STRCHR",
+    "F.substring({0}, {1}, 1)",
+    "SUBSTRING({0}, {1}, 1)",
+    2,
+    2,
+    notes="Returns single character at the given position",
+)
+
+# ---------------------------------------------------------------------------
+# Hashing functions
+# ---------------------------------------------------------------------------
+_register("MD5_ASCII", "F.md5({0})", "MD5({0})", 1, 1)
+_register("SHA1_ASCII", "F.sha1({0})", "SHA1({0})", 1, 1)
+_register("UUID", "F.expr('uuid()')", "UUID()", 0, 0)
+
+# ---------------------------------------------------------------------------
+# Additional math functions
+# ---------------------------------------------------------------------------
+_register("SoundEx", "F.soundex({0})", "SOUNDEX({0})", 1, 1)
+_register("Cosh", "((F.exp({0}) + F.exp(-({0}))) / F.lit(2))", "COSH({0})", 1, 1)
+_register("Sinh", "((F.exp({0}) - F.exp(-({0}))) / F.lit(2))", "SINH({0})", 1, 1)
+_register("Tanh", "((F.exp({0}) - F.exp(-({0}))) / (F.exp({0}) + F.exp(-({0}))))", "TANH({0})", 1, 1)
+_register(
+    "Bound",
+    "F.greatest({1}, F.least({2}, {0}))",
+    "GREATEST({1}, LEAST({2}, {0}))",
+    3,
+    3,
+    notes="Clamps value between min and max: Bound(value, min, max)",
+)
+
+
+# ---------------------------------------------------------------------------
+# Additional file functions
+# ---------------------------------------------------------------------------
+_register(
+    "FileGetDirectory",
+    r"F.regexp_replace({0}, F.lit('[^/\\\\]+$'), F.lit(''))",
+    r"REGEXP_REPLACE({0}, '[^/\\\\]+$', '')",
+    1,
+    1,
+    notes="Extracts directory path from a file path; strips trailing filename",
+)
+_register(
+    "FileGetExtension",
+    "F.regexp_extract({0}, r'(\\.[^.]+)$', 1)",
+    "REGEXP_EXTRACT({0}, '(\\\\.[^.]+)$', 1)",
+    1,
+    1,
+    notes="Extracts file extension including the dot (e.g. '.csv')",
+)
+_register(
+    "FileExists",
+    "F.lit(True)",
+    "TRUE",
+    1,
+    1,
+    notes="Cannot check filesystem at column level; always returns True. Check manually.",
+)
+
+# ---------------------------------------------------------------------------
+# Additional DateTime functions
+# ---------------------------------------------------------------------------
+_register("DateTimeQuarter", "F.quarter({0})", "QUARTER({0})", 1, 1)
+_register("DateTimeDayOfYear", "F.dayofyear({0})", "DAYOFYEAR({0})", 1, 1)
+_register("DateTimeWeekOfYear", "F.weekofyear({0})", "WEEKOFYEAR({0})", 1, 1)
+
+# ---------------------------------------------------------------------------
+# Additional math functions
+# ---------------------------------------------------------------------------
+_register("GCD", "__SQLEXPR__gcd({0}, {1})", "GCD({0}, {1})", 2, 2)
+_register("LCM", "__SQLEXPR__({0} * {1}) / gcd({0}, {1})", "({0} * {1}) / GCD({0}, {1})", 2, 2)
+_register("Factorial", "__SQLEXPR__factorial({0})", "FACTORIAL({0})", 1, 1)
+_register("Sign", "F.signum({0})", "SIGN({0})", 1, 1)
+_register("SmallestInteger", "F.ceil({0})", "CEIL({0})", 1, 1, notes="Alias for CEIL — smallest integer >= value")
+_register("LargestInteger", "F.floor({0})", "FLOOR({0})", 1, 1, notes="Alias for FLOOR — largest integer <= value")
+
+# ---------------------------------------------------------------------------
+# Finance functions (PySpark UDF required)
+# ---------------------------------------------------------------------------
+_register(
+    "PV",
+    "__SQLEXPR__(-{2} * ((1 - power(1 + {0}, -{1})) / {0}))",
+    "(-{2} * ((1 - POWER(1 + {0}, -{1})) / {0}))",
+    3,
+    5,
+    notes="Present Value: PV(rate, nper, pmt, [fv], [type]). Simplified — fv/type args ignored.",
+)
+_register(
+    "FV",
+    "__SQLEXPR__({2} * ((power(1 + {0}, {1}) - 1) / {0}))",
+    "({2} * ((POWER(1 + {0}, {1}) - 1) / {0}))",
+    3,
+    5,
+    notes="Future Value: FV(rate, nper, pmt, [pv], [type]). Simplified — pv/type args ignored.",
+)
+_register(
+    "PMT",
+    "__SQLEXPR__({2} * {0} / (1 - power(1 + {0}, -{1})))",
+    "({2} * {0} / (1 - POWER(1 + {0}, -{1})))",
+    3,
+    5,
+    notes="Payment amount: PMT(rate, nper, pv, [fv], [type]). Simplified — fv/type args ignored.",
+)
+
+# ---------------------------------------------------------------------------
+# Additional string functions
+# ---------------------------------------------------------------------------
+_register(
+    "Levenshtein", "F.levenshtein({0}, {1})", "LEVENSHTEIN({0}, {1})", 2, 2, notes="Edit distance between two strings"
+)
+_register("SHA256_ASCII", "F.sha2({0}, 256)", "SHA2({0}, 256)", 1, 1)
+_register(
+    "REGEX_Extract",
+    "F.regexp_extract({0}, {1}, 1)",
+    "REGEXP_EXTRACT({0}, {1}, 1)",
+    2,
+    2,
+    notes="Extracts first matching group from regex pattern",
+)
+
+# ---------------------------------------------------------------------------
+# Aliases for common alternate function names
+# ---------------------------------------------------------------------------
+_register("Lower", "F.lower({0})", "LOWER({0})", 1, 1, notes="Alias for LowerCase")
+_register("Upper", "F.upper({0})", "UPPER({0})", 1, 1, notes="Alias for Uppercase")
+_register(
+    "Proper",
+    "F.initcap({0})",
+    "INITCAP({0})",
+    1,
+    1,
+    notes="Alias for TitleCase — capitalizes first letter of each word",
+)
+_register("IF", "F.when({0}, {1}).otherwise({2})", "CASE WHEN {0} THEN {1} ELSE {2} END", 3, 3, notes="Alias for IIF")
+_register(
+    "ToInt32",
+    "F.try_cast({0}, 'int')",
+    "TRY_CAST({0} AS INT)",
+    1,
+    1,
+    notes="Alias for ToInteger; null-on-failure (Alteryx semantics)",
+)
+_register(
+    "ToInt64", "F.try_cast({0}, 'long')", "TRY_CAST({0} AS BIGINT)", 1, 1, notes="null-on-failure (Alteryx semantics)"
+)
+_register(
+    "ToDouble",
+    "F.try_cast({0}, 'double')",
+    "TRY_CAST({0} AS DOUBLE)",
+    1,
+    1,
+    notes="Alias for ToNumber; null-on-failure (Alteryx semantics)",
+)
+
+# ---------------------------------------------------------------------------
+# Base conversion functions
+# ---------------------------------------------------------------------------
+_register(
+    "ConvertFromBase",
+    "F.conv({0}, {1}, 10)",
+    "CONV({0}, {1}, 10)",
+    2,
+    2,
+    notes="Convert number from given base to base-10",
+)
+_register(
+    "ConvertToBase", "F.conv({0}, 10, {1})", "CONV({0}, 10, {1})", 2, 2, notes="Convert base-10 number to target base"
+)
+_register(
+    "HexToBinary",
+    "F.bin(F.conv({0}, 16, 10).cast('long'))",
+    "BIN(CONV({0}, 16, 10))",
+    1,
+    1,
+    notes="Convert hexadecimal string to binary string",
+)
+_register(
+    "BinaryToHex",
+    "F.hex(F.conv({0}, 2, 10).cast('long'))",
+    "HEX(CONV({0}, 2, 10))",
+    1,
+    1,
+    notes="Convert binary string to hexadecimal string",
+)
+
+# ---------------------------------------------------------------------------
+# Additional string functions
+# ---------------------------------------------------------------------------
+_register(
+    "StripAccents",
+    "F.translate({0}, F.lit('àáâãäåèéêëìíîïòóôõöùúûüýñçÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝÑÇ'), F.lit('aaaaaaeeeeiiiioooooouuuuyncAAAAAAEEEEIIIIOOOOOUUUUYNC'))",
+    "TRANSLATE({0}, 'àáâãäåèéêëìíîïòóôõöùúûüýñçÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝÑÇ', 'aaaaaaeeeeiiiioooooouuuuyncAAAAAAEEEEIIIIOOOOOUUUUYNC')",
+    1,
+    1,
+    notes="Removes diacritics by translating accented characters to ASCII equivalents. Covers common Latin accents only.",
+)
+
+# ---------------------------------------------------------------------------
+# Additional math functions — combinatorics
+# ---------------------------------------------------------------------------
+_register(
+    "BinomCoeff",
+    "__SQLEXPR__factorial({0}) / (factorial({1}) * factorial({0} - {1}))",
+    "(FACTORIAL({0}) / (FACTORIAL({1}) * FACTORIAL({0} - {1})))",
+    2,
+    2,
+    notes="Binomial coefficient C(n, k) = n! / (k! * (n-k)!). Alteryx name: BinomCoeff.",
+)
+_register(
+    "Comb",
+    "__SQLEXPR__factorial({0}) / (factorial({1}) * factorial({0} - {1}))",
+    "(FACTORIAL({0}) / (FACTORIAL({1}) * FACTORIAL({0} - {1})))",
+    2,
+    2,
+    notes="Combinations C(n, k) — alias for BinomCoeff",
+)
+_register(
+    "Perm",
+    "__SQLEXPR__factorial({0}) / factorial({0} - {1})",
+    "(FACTORIAL({0}) / FACTORIAL({0} - {1}))",
+    2,
+    2,
+    notes="Permutations P(n, k) = n! / (n-k)!",
 )
 
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from typing import ClassVar
 
 from a2d.config import ConversionConfig
 from a2d.exceptions import ConverterError
@@ -49,7 +50,7 @@ class ToolConverter(ABC):
 class ConverterRegistry:
     """Central registry mapping Alteryx tool types to converter instances."""
 
-    _converters: dict[str, ToolConverter] = {}
+    _converters: ClassVar[dict[str, ToolConverter]] = {}
 
     @classmethod
     def register(cls, converter_class: type[ToolConverter]) -> type[ToolConverter]:
@@ -88,7 +89,7 @@ class ConverterRegistry:
         if converter:
             try:
                 return converter.convert(parsed_node, config)
-            except ConverterError:
+            except (ConverterError, KeyError, TypeError, ValueError):
                 logger.exception(
                     "Converter %s failed for tool %s (id=%d)",
                     type(converter).__name__,

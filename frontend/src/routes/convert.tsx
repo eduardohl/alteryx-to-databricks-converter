@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { FileDropzone } from "@/components/shared/file-dropzone";
-import { FormatSelector } from "@/components/convert/format-selector";
 import { ConversionResults } from "@/components/convert/conversion-results";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -10,77 +9,61 @@ import { useSettingsStore } from "@/stores/settings";
 import { useToastStore } from "@/stores/toast";
 import { useLocalHistoryStore } from "@/stores/local-history";
 import { useConvertBridge } from "@/stores/convert-bridge";
-import { Card } from "@/components/ui/card";
-import { Play, Loader2, RotateCcw, ArrowRight, ChevronDown, Info } from "lucide-react";
-
-const FORMAT_GUIDE = [
-  {
-    id: "pyspark",
-    name: "PySpark",
-    best: "Interactive notebooks, exploratory analysis, complex transformations",
-    output: "Databricks .py notebooks with PySpark DataFrame API",
-    when: "Default choice. Best for teams familiar with Python and needing full control.",
-  },
-  {
-    id: "dlt",
-    name: "Delta Live Tables",
-    best: "Production ETL pipelines, data quality, automated orchestration",
-    output: "DLT pipeline definitions with @dlt.table decorators",
-    when: "Best for production data engineering. Handles dependencies, quality checks, and retries.",
-  },
-  {
-    id: "sql",
-    name: "Spark SQL",
-    best: "SQL-first teams, simple transformations, quick migration",
-    output: "SQL views, CTEs, and CREATE TABLE statements",
-    when: "Easiest to understand. Best for analysts or simple transformation chains.",
-  },
-];
+import { Link } from "@tanstack/react-router";
+import { Play, Loader2, RotateCcw, ArrowRight } from "lucide-react";
 
 export function ConvertPage() {
   const [files, setFiles] = useState<File[]>([]);
-  const settings = useSettingsStore();
-  const [format, setFormat] = useState(settings.format);
-  const toast = useToastStore();
-  const localHistory = useLocalHistoryStore();
+  const catalogName = useSettingsStore((s) => s.catalogName);
+  const schemaName = useSettingsStore((s) => s.schemaName);
+  const includeComments = useSettingsStore((s) => s.includeComments);
+  const includeExpressionAudit = useSettingsStore((s) => s.includeExpressionAudit);
+  const includePerformanceHints = useSettingsStore((s) => s.includePerformanceHints);
+  const generateDdl = useSettingsStore((s) => s.generateDdl);
+  const generateDab = useSettingsStore((s) => s.generateDab);
+  const expandMacros = useSettingsStore((s) => s.expandMacros);
+  const addToast = useToastStore((s) => s.add);
+  const addToHistory = useLocalHistoryStore((s) => s.add);
   const mutation = useConversion();
   const resultsRef = useRef<HTMLDivElement>(null);
-  const bridge = useConvertBridge();
+  const bridgeWorkflowName = useConvertBridge((s) => s.workflowName);
+  const clearBridge = useConvertBridge((s) => s.clear);
 
-  // Clear bridge hint on unmount
+  // Clear bridge hint on unmount. clearBridge is a stable Zustand action,
+  // so the dep array won't churn — avoids re-entrant clear() loops.
   useEffect(() => {
-    return () => bridge.clear();
-  }, []);
-
-  // Persist format choice
-  useEffect(() => {
-    settings.setFormat(format);
-  }, [format]);
+    return () => clearBridge();
+  }, [clearBridge]);
 
   const handleConvert = () => {
     if (files.length === 0) return;
     mutation.mutate({
       file: files[0],
-      format,
-      catalogName: settings.catalogName,
-      schemaName: settings.schemaName,
-      includeComments: settings.includeComments,
+      catalogName,
+      schemaName,
+      includeComments,
+      includeExpressionAudit,
+      includePerformanceHints,
+      generateDdl,
+      generateDab,
+      expandMacros,
     });
   };
 
-  // On success: toast + scroll + save to local history
+  // On success: toast + scroll + save to local history.
+  // addToast and addToHistory are stable Zustand actions.
   useEffect(() => {
     if (mutation.data) {
-      toast.add(
+      addToast(
         `Converted "${mutation.data.workflow_name}" successfully`,
         "success",
       );
-      localHistory.add(mutation.data, format);
+      addToHistory(mutation.data);
       setTimeout(() => {
         resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 100);
     }
-  }, [mutation.data]);
+  }, [mutation.data, addToast, addToHistory]);
 
   const handleReset = () => {
     mutation.reset();
@@ -91,7 +74,7 @@ export function ConvertPage() {
     <div className="space-y-6">
       <PageHeader
         title="Convert Workflow"
-        description="Upload a single .yxmd file and generate equivalent Databricks code"
+        description="Upload a single .yxmd file and generate equivalent Databricks code in all supported formats"
       >
         {mutation.data && (
           <Button variant="secondary" size="sm" onClick={handleReset}>
@@ -103,70 +86,47 @@ export function ConvertPage() {
 
       {!mutation.data && (
         <>
-          {bridge.workflowName && (
+          {bridgeWorkflowName && (
             <div className="flex items-center gap-2 rounded-lg border border-[var(--ring)]/30 bg-[var(--ring)]/5 px-4 py-3 text-sm text-[var(--fg)]">
               <ArrowRight className="h-4 w-4 text-[var(--ring)] shrink-0" />
-              Ready to convert <strong>{bridge.workflowName}</strong> from your analysis. Upload the .yxmd file below.
+              Ready to convert <strong>{bridgeWorkflowName}</strong> from your analysis. Upload the .yxmd file below.
             </div>
           )}
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 items-end">
-            <FileDropzone files={files} onFilesChange={setFiles} />
-            <div className="flex items-center gap-3">
-              <FormatSelector value={format} onChange={setFormat} />
-              <Button
-                onClick={handleConvert}
-                disabled={files.length === 0 || mutation.isPending}
-              >
-                {mutation.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Play className="h-4 w-4" />
-                )}
-                Convert
-              </Button>
+          <FileDropzone files={files} onFilesChange={setFiles} />
+
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={handleConvert}
+              disabled={files.length === 0 || mutation.isPending}
+            >
+              {mutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Play className="h-4 w-4" />
+              )}
+              Convert
+            </Button>
+            <div className="flex items-center gap-2 rounded-lg bg-[var(--bg-sidebar)] px-3 py-2 text-xs text-[var(--fg-muted)]">
+              <span>
+                Using catalog <strong className="text-[var(--fg)]">{catalogName}.{schemaName}</strong>
+                {includeComments ? " with comments" : ""}
+              </span>
+              <Link to="/settings" className="ml-auto text-[var(--ring)] hover:underline whitespace-nowrap">
+                Change settings →
+              </Link>
             </div>
           </div>
-
-          <p className="text-xs text-[var(--fg-muted)]">
-            Output: {format === "pyspark" ? "PySpark" : format === "dlt" ? "Delta Live Tables" : "Spark SQL"}
-            {" | "}Catalog: {settings.catalogName}.{settings.schemaName}
-            {" | "}
-            <a href="/settings" className="underline hover:text-[var(--fg)]">Change settings</a>
-          </p>
-
-          {/* Format comparison guide */}
-          <details className="group">
-            <summary className="flex items-center gap-1.5 text-xs text-[var(--fg-muted)] cursor-pointer hover:text-[var(--fg)]">
-              <Info className="h-3.5 w-3.5" />
-              Which format should I choose?
-              <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
-            </summary>
-            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
-              {FORMAT_GUIDE.map((fg) => (
-                <Card
-                  key={fg.id}
-                  className={`cursor-pointer transition-all ${
-                    format === fg.id
-                      ? "ring-2 ring-[var(--ring)] shadow-md"
-                      : "hover:shadow-sm"
-                  }`}
-                  onClick={() => setFormat(fg.id)}
-                >
-                  <h4 className="text-sm font-semibold text-[var(--fg)] mb-1">{fg.name}</h4>
-                  <p className="text-xs text-[var(--fg-muted)] mb-2">{fg.output}</p>
-                  <p className="text-xs text-[var(--fg)]"><strong>Best for:</strong> {fg.best}</p>
-                  <p className="text-xs text-[var(--fg-muted)] mt-1">{fg.when}</p>
-                </Card>
-              ))}
-            </div>
-          </details>
         </>
       )}
 
       {mutation.isPending && (
         <div className="space-y-4">
-          <div className="text-sm text-[var(--fg-muted)] animate-pulse">
-            Converting {files[0]?.name}...
+          <div className="flex items-center gap-2 text-sm text-[var(--fg-muted)]">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span className="animate-pulse">
+              Generating PySpark, Spark Declarative Pipelines, Spark SQL, and Lakeflow Designer code for {files[0]?.name}
+              {files[0] && ` (${(files[0].size / 1024).toFixed(0)} KB)`}...
+            </span>
           </div>
           <Skeleton className="h-24 rounded-xl" />
           <Skeleton className="h-64 rounded-xl" />

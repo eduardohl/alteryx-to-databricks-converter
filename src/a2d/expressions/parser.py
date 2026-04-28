@@ -175,8 +175,20 @@ class ExpressionParser:
         return left
 
     def _parse_in(self) -> Expr:
-        """Parse IN expressions: expr IN (val1, val2, ...)."""
+        """Parse IN / NOT IN expressions: expr [NOT] IN (val1, val2, ...)."""
         left = self._parse_addition()
+
+        # Check for NOT IN (two-token lookahead)
+        negate = False
+        if (
+            self._current().token_type == TokenType.LOGICAL
+            and self._current().value.upper() in ("NOT", "!")
+            and self._pos + 1 < len(self._tokens)
+            and self._tokens[self._pos + 1].token_type == TokenType.KEYWORD
+            and self._tokens[self._pos + 1].value.upper() == "IN"
+        ):
+            self._advance()  # consume NOT
+            negate = True
 
         if self._match_keyword("IN"):
             self._advance()  # consume IN
@@ -190,7 +202,10 @@ class ExpressionParser:
                     items.append(self._parse_expression())
 
             self._expect(TokenType.RPAREN)
-            return InExpr(value=left, items=items)
+            in_expr = InExpr(value=left, items=items)
+            if negate:
+                return NotOp(operand=in_expr)
+            return in_expr
 
         return left
 

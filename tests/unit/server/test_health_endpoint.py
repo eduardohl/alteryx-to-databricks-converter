@@ -20,5 +20,5 @@ def test_stats(client):
     assert data["supported_tools"] > 0
     assert data["total_tools"] >= data["supported_tools"]
     assert data["expression_functions"] > 0
-    assert data["output_formats"] == 3
+    assert data["output_formats"] == 4
     assert "version" in data

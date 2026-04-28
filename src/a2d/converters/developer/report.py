@@ -69,7 +69,5 @@ class ReportConverter(ToolConverter):
             title=title,
             fields=fields,
             output_format=output_format,
-            conversion_notes=[
-                f"Report {report_type}; consider using Databricks notebooks for reporting."
-            ],
+            conversion_notes=[f"Report {report_type}; consider using Databricks notebooks for reporting."],
         )

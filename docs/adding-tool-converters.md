@@ -1,6 +1,6 @@
 # Adding a New Tool Converter
 
-This guide walks through the end-to-end process of adding support for a new Alteryx tool. By the end, the tool will be parsed, converted to an IR node, and generated into PySpark, DLT, and SQL output.
+This guide walks through the end-to-end process of adding support for a new Alteryx tool. By the end, the tool will be parsed, converted to an IR node, and generated into all four output formats: PySpark, Spark Declarative Pipelines (DLT), SQL, and Lakeflow Designer. (Lakeflow inherits from SQL, so most new tools need no Lakeflow-specific code.)
 
 ---
 
@@ -111,17 +111,7 @@ Rules:
 - Add a docstring explaining the tool's semantics
 - Use primitive types and lists -- avoid complex objects unless necessary
 
-If you add a new node class, also add a visitor method stub in `src/a2d/ir/visitors.py`:
-
-```python
-class IRVisitor(ABC):
-    # ... existing methods ...
-
-    def visit_TileNode(self, node: TileNode) -> Any:
-        return self.generic_visit(node)
-```
-
-And import the new node in the visitors file's import block.
+Note: There is no separate `visitors.py` file. The generators discover node types via `isinstance` checks in their handler methods, so no visitor registration is needed.
 
 ---
 
@@ -203,7 +193,7 @@ This import triggers the `@register` decorator at module load time.
 
 ## Step 5: Add Generation Logic
 
-You need to add generation code in **three** generators (PySpark, DLT, SQL) plus optionally handle it in the workflow JSON generator.
+You need to add generation code in **three** generators (PySpark, DLT, SQL). The Lakeflow generator inherits from SQL, so most SQL handlers are automatically available in Lakeflow. Optionally handle it in the workflow JSON generator.
 
 ### PySpark Generator
 
@@ -282,11 +272,23 @@ if isinstance(node, TileNode):
     ), warnings
 ```
 
+### Lakeflow Generator
+
+**File**: `src/a2d/generators/lakeflow.py`
+
+`LakeflowGenerator` extends `SQLGenerator`, so your SQL handler above is automatically inherited. You only need to add Lakeflow-specific logic if the node requires different treatment (e.g., `STREAMING TABLE` vs `MATERIALIZED VIEW`). Most new tools need no changes here.
+
+If the node represents a streaming source, add it to `_PASSTHROUGH_TYPES` or override `_is_streaming_source`:
+
+```python
+_PASSTHROUGH_TYPES = frozenset({"ReadNode", "CloudStorageNode", "DynamicInputNode", "YourNewNode"})
+```
+
 ---
 
 ## Step 6: Write Tests
 
-Create a test file at `tests/converters/transform/test_tile.py` (or appropriate location):
+Create a test file at `tests/unit/converters/transform/test_tile.py` (or appropriate location):
 
 ```python
 """Tests for Tile tool converter."""
@@ -360,7 +362,7 @@ def test_tile_pyspark_generation():
 Run the tests:
 
 ```bash
-pytest tests/converters/transform/test_tile.py -v
+pytest tests/unit/converters/transform/test_tile.py -v
 ```
 
 ---
@@ -368,10 +370,11 @@ pytest tests/converters/transform/test_tile.py -v
 ## Step 7: Verify End-to-End
 
 1. Create or find a `.yxmd` file that uses the Tile tool
-2. Run: `a2d convert test_tile.yxmd -o /tmp/tile_test/`
-3. Verify the generated code contains the expected `ntile` logic
-4. Run: `a2d list-tools --supported` and confirm "Tile" appears
-5. Run: `make all` to ensure lint, typecheck, and tests pass
+2. Run: `a2d convert test_tile.yxmd -o /tmp/tile_test/` — emits all 4 formats by default into `pyspark/`, `dlt/`, `sql/`, `lakeflow/` subdirs
+3. Verify the generated code in each subdir contains the expected `ntile` logic (PySpark / DLT / SQL / Lakeflow flavors)
+4. Confirm the CLI deploy-readiness banner reports `Ready to deploy` and that the per-format status table shows `OK` for all four formats — flag the best-format star (`★`)
+5. Run: `a2d list-tools --supported` and confirm "Tile" appears
+6. Run: `make all` to ensure lint, typecheck, and tests pass
 
 ---
 
@@ -383,15 +386,15 @@ Here is the complete summary of all files touched:
 |------|------|--------|
 | 2 | `src/a2d/parser/schema.py` | Add `"AlteryxBasePluginsGui.Tile.Tile": ("Tile", "transform")` to `PLUGIN_NAME_MAP` |
 | 3 | `src/a2d/ir/nodes.py` | Add `TileNode` dataclass |
-| 3 | `src/a2d/ir/visitors.py` | Add `visit_TileNode` stub + import |
 | 4 | `src/a2d/converters/transform/tile.py` | Create `TileConverter` with `@register` |
 | 4 | `src/a2d/converters/transform/__init__.py` | Add import of `TileConverter` |
 | 5 | `src/a2d/generators/pyspark.py` | Add `_generate_TileNode` method + import |
 | 5 | `src/a2d/generators/dlt.py` | Add `TileNode` handler in `_node_body` + import |
 | 5 | `src/a2d/generators/sql.py` | Add `TileNode` handler in `_generate_cte_body` + import |
-| 6 | `tests/converters/transform/test_tile.py` | Create test file |
+| 5 | `src/a2d/generators/lakeflow.py` | Usually no change needed (inherits from SQL) |
+| 6 | `tests/unit/converters/transform/test_tile.py` | Create test file |
 
-Total: 8-9 files touched. The pattern is consistent across all tools, making it easy to parallelize converter development across team members.
+Total: 7-8 files touched (Lakeflow usually inherits SQL handler automatically). The pattern is consistent across all tools, making it easy to parallelize converter development.
 
 ---
 
@@ -402,12 +405,12 @@ Use this checklist when adding any new converter:
 - [ ] Plugin name identified from a `.yxmd` file
 - [ ] Entry added to `PLUGIN_NAME_MAP` in `schema.py`
 - [ ] IR node class created in `nodes.py` (or existing node reused)
-- [ ] Visitor stub added to `visitors.py` (if new node class)
 - [ ] Converter class created with `@ConverterRegistry.register`
 - [ ] Converter imported in category `__init__.py`
 - [ ] PySpark generator method added
 - [ ] DLT generator handler added
 - [ ] SQL generator handler added
+- [ ] Lakeflow generator verified (inherits SQL; override only if needed)
 - [ ] Unit tests written and passing
 - [ ] `a2d list-tools --supported` shows the tool
 - [ ] `make all` passes (lint + typecheck + tests)

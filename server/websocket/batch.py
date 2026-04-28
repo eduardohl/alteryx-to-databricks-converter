@@ -7,7 +7,7 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from server.services.batch import get_job, subscribe, unsubscribe
+from server.services.batch import JobStatus, get_job, subscribe, unsubscribe
 
 logger = logging.getLogger("a2d.server.websocket.batch")
 
@@ -35,13 +35,15 @@ async def batch_ws(websocket: WebSocket, job_id: str) -> None:
         for fr in job.file_results:
             await websocket.send_json({"type": "file_complete", **fr})
 
-        if job.status in ("completed", "failed"):
-            await websocket.send_json({
-                "type": "batch_complete",
-                "batch_metrics": job.batch_metrics,
-                "errors_by_kind": job.errors_by_kind,
-                "file_results": job.file_results,
-            })
+        if job.status in (JobStatus.COMPLETED, JobStatus.FAILED):
+            await websocket.send_json(
+                {
+                    "type": "batch_complete",
+                    "batch_metrics": job.batch_metrics,
+                    "errors_by_kind": job.errors_by_kind,
+                    "file_results": job.file_results,
+                }
+            )
             return
 
         # Stream updates as they arrive
@@ -53,12 +55,14 @@ async def batch_ws(websocket: WebSocket, job_id: str) -> None:
                     break
             except asyncio.TimeoutError:
                 # Send keepalive
-                await websocket.send_json({
-                    "type": "progress",
-                    "current": job.progress,
-                    "total": job.total,
-                    "filename": job.current_filename,
-                })
+                await websocket.send_json(
+                    {
+                        "type": "progress",
+                        "current": job.progress,
+                        "total": job.total,
+                        "filename": job.current_filename,
+                    }
+                )
     except WebSocketDisconnect:
         logger.info("WebSocket subscriber disconnected for job %s", job_id)
     finally:

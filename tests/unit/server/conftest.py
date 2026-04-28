@@ -20,8 +20,3 @@ def simple_yxmd() -> bytes:
     """Read the simple_filter fixture as bytes."""
     path = Path(__file__).parent.parent.parent / "fixtures" / "workflows" / "simple_filter.yxmd"
     return path.read_bytes()
-
-
-@pytest.fixture()
-def simple_yxmd_path() -> Path:
-    return Path(__file__).parent.parent.parent / "fixtures" / "workflows" / "simple_filter.yxmd"

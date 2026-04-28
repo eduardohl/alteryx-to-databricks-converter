@@ -11,7 +11,6 @@ import {
   Menu,
   X,
   Clock,
-  Map,
   CheckCircle,
   Settings,
 } from "lucide-react";
@@ -52,9 +51,8 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    title: "Plan & Validate",
+    title: "Validate",
     items: [
-      { to: "/migration-plan", label: "Plan", icon: Map },
       { to: "/validate", label: "Validate", icon: CheckCircle },
     ],
   },
@@ -68,7 +66,8 @@ const navGroups: NavGroup[] = [
 ];
 
 export function Sidebar() {
-  const { theme, toggle } = useThemeStore();
+  const theme = useThemeStore((s) => s.theme);
+  const toggle = useThemeStore((s) => s.toggle);
   const [open, setOpen] = useState(false);
   const routerState = useRouterState();
   const currentPath = routerState.location.pathname;

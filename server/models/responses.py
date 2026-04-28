@@ -31,15 +31,6 @@ class GeneratedFileResponse(BaseModel):
     file_type: str
 
 
-class ConversionStatsResponse(BaseModel):
-    """Typed replacement for the untyped stats dict in ConversionResponse."""
-    node_count: int = 0
-    edge_count: int = 0
-    coverage_percentage: float = 0.0
-    files_generated: int = 0
-    unsupported_tools: list[str] = []
-
-
 class DagNodeResponse(BaseModel):
     node_id: int
     tool_type: str
@@ -62,14 +53,71 @@ class DagDataResponse(BaseModel):
     edges: list[DagEdgeResponse]
 
 
-class ConversionResponse(BaseModel):
-    workflow_name: str
+class ConfidenceDimensionResponse(BaseModel):
+    name: str
+    score: float
+    weight: float
+    details: str
+
+
+class ConfidenceResponse(BaseModel):
+    overall: float
+    level: str
+    dimensions: list[ConfidenceDimensionResponse] = []
+
+
+class ExpressionAuditEntryResponse(BaseModel):
+    """A single expression audit entry."""
+
+    node_id: int
+    tool_type: str
+    field_name: str
+    original_expression: str
+    translation_method: str
+    confidence: float
+    warnings: list[str] = []
+
+
+class PerformanceHintResponse(BaseModel):
+    """A single performance optimization hint."""
+
+    node_id: int
+    hint_type: str
+    priority: str
+    suggestion: str
+    code_snippet: str = ""
+    tool_type: str = ""
+
+
+class FormatResultResponse(BaseModel):
+    """Result for a single output format inside a multi-format conversion."""
+
+    format: str
+    status: Literal["success", "failed"]
     files: list[GeneratedFileResponse]
-    stats: dict  # kept as dict for backward compat with pipeline output
+    stats: dict
     warnings: list[str]
+    confidence: ConfidenceResponse | None = None
+    error: str | None = None
+
+
+class ConversionResponse(BaseModel):
+    """Multi-format conversion response: every format converted per request."""
+
+    workflow_name: str
     node_count: int
     edge_count: int
+    warnings: list[str]
     dag_data: DagDataResponse | None = None
+    expression_audit: list[ExpressionAuditEntryResponse] | None = None
+    performance_hints: list[PerformanceHintResponse] | None = None
+    best_format: str
+    formats: dict[str, FormatResultResponse]
+    # Single source of truth for the headline coverage metric. Mirrors the
+    # best-format coverage so the frontend can render one number without
+    # having to re-derive it from `formats[best_format].stats`. May be None
+    # when every format failed.
+    coverage: float | None = None
 
 
 class BatchStartResponse(BaseModel):
@@ -79,6 +127,7 @@ class BatchStartResponse(BaseModel):
 
 class ErrorDetail(BaseModel):
     """Typed model for individual error entries."""
+
     message: str
     severity: str = "ERROR"
     tool_type: str | None = None

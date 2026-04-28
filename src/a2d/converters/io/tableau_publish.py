@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from a2d.config import ConversionConfig
 from a2d.converters.registry import ConverterRegistry, ToolConverter
-from a2d.converters.utils import safe_get
 from a2d.ir.nodes import IRNode, WriteNode
 from a2d.parser.schema import ParsedNode
 
@@ -40,7 +39,6 @@ class TableauPublishConverter(ToolConverter):
         server_url = _extract_value(cfg, "serverUrl")
         site = _extract_value(cfg, "site")
         datasource = _extract_value(cfg, "datasourceName")
-        project_id = _extract_value(cfg, "projects")
 
         # Build a meaningful table name from the Tableau datasource name
         table_name = datasource or f"tableau_output_{parsed_node.tool_id}"

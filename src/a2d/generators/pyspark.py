@@ -9,34 +9,30 @@ from __future__ import annotations
 import logging
 import re
 
+# Pre-compiled patterns used in hot paths (per-node handlers)
+_NUMERIC_LITERAL_RE = re.compile(r"^-?\d+(\.\d+)?$")
+_PASSTHROUGH_RE = re.compile(r"^(df_\d+) = (df_\d+)$")
+_IMPLICIT_FIELD_RE = re.compile(r'((?:ELSE)?IF)\s+"([^"]*)"(\s+THEN)')
+
 from a2d.config import ConversionConfig
 from a2d.expressions.base_translator import BaseTranslationError
-from a2d.expressions.parser import ParserError
 from a2d.expressions.translator import PySparkTranslator
 from a2d.generators.base import CodeGenerator, GeneratedFile, GeneratedOutput, NodeCodeResult
-from a2d.utils.types import alteryx_fmt_to_spark, normalize_sql_for_spark
 from a2d.ir.graph import WorkflowDAG
 from a2d.ir.nodes import (
-    ABAnalysisNode,
     AggAction,
-    AppendClusterNode,
     AppendFieldsNode,
-    ARIMANode,
     AutoFieldNode,
-    BoostedModelNode,
     BrowseNode,
     BufferNode,
     ChartNode,
     CloudStorageNode,
     CommentNode,
     CountRecordsNode,
-    CountRegressionNode,
     CreatePointsNode,
     CrossTabNode,
-    CrossValidationNode,
     DataCleansingNode,
     DateTimeNode,
-    DecisionTreeNode,
     DirectoryNode,
     DistanceNode,
     DownloadNode,
@@ -44,16 +40,12 @@ from a2d.ir.nodes import (
     DynamicOutputNode,
     DynamicRenameNode,
     EmailOutputNode,
-    ETSNode,
     FieldAction,
     FieldSummaryNode,
     FilterNode,
-    FindNearestNeighborsNode,
     FindNearestNode,
     FindReplaceNode,
-    ForestModelNode,
     FormulaNode,
-    GammaRegressionNode,
     GenerateRowsNode,
     GeocoderNode,
     ImputationNode,
@@ -61,22 +53,12 @@ from a2d.ir.nodes import (
     JoinMultipleNode,
     JoinNode,
     JsonParseNode,
-    KCentroidsDiagnosticsNode,
-    KCentroidsNode,
-    LiftChartNode,
-    LinearRegressionNode,
     LiteralDataNode,
-    LogisticRegressionNode,
     MacroIONode,
     MakeGridNode,
-    MeansTestNode,
-    ModelCoefficientsNode,
-    ModelComparisonNode,
     MultiFieldFormulaNode,
     MultiRowFormulaNode,
-    NaiveBayesNode,
-    NeuralNetworkNode,
-    PrincipalComponentsNode,
+    PredictiveModelNode,
     PythonToolNode,
     ReadNode,
     RecordIDNode,
@@ -85,29 +67,24 @@ from a2d.ir.nodes import (
     RunCommandNode,
     RunningTotalNode,
     SampleNode,
-    ScoreModelNode,
     SelectNode,
     SortNode,
     SpatialMatchNode,
-    SplineModelNode,
-    StepwiseNode,
     SummarizeNode,
-    SupportVectorMachineNode,
     TextToColumnsNode,
     TileNode,
     TradeAreaNode,
     TransposeNode,
-    TSForecastNode,
     UnionNode,
     UniqueNode,
     UnsupportedNode,
-    VarianceInflationFactorsNode,
     WeightedAverageNode,
     WidgetNode,
     WorkflowControlNode,
     WriteNode,
     XMLParseNode,
 )
+from a2d.utils.types import alteryx_fmt_to_spark, normalize_sql_for_spark
 
 logger = logging.getLogger("a2d.generators.pyspark")
 
@@ -127,7 +104,7 @@ class PySparkGenerator(CodeGenerator):
     @staticmethod
     def _esc(s: str) -> str:
         """Escape a string for safe embedding inside a double-quoted Python string literal."""
-        return s.replace("\\", "\\\\").replace('"', '\\"')
+        return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
 
     # -- Public API ---------------------------------------------------------
 
@@ -160,11 +137,7 @@ class PySparkGenerator(CodeGenerator):
             # that feeds exactly one downstream step, skip emitting it as its own
             # cell. Store the spark.sql(...) expression as the "variable" in
             # var_map so the downstream generator picks it up directly.
-            if (
-                isinstance(node, ReadNode)
-                and node.source_type == "database"
-                and node.query
-            ):
+            if isinstance(node, ReadNode) and node.source_type == "database" and node.query:
                 successors = dag.get_successors(node.node_id)
                 if len(successors) == 1:
                     normalized_query, _sql_warns = normalize_sql_for_spark(node.query)
@@ -197,7 +170,7 @@ class PySparkGenerator(CodeGenerator):
             # source variable so downstream nodes skip the indirection entirely.
             out_var = result.output_vars.get("Output", "")
             if out_var and len(result.code_lines) == 1 and not node.annotation:
-                _m = re.match(r"^(df_\d+) = (df_\d+)$", result.code_lines[0])
+                _m = _PASSTHROUGH_RE.match(result.code_lines[0])
                 if _m and _m.group(1) == out_var:
                     var_map[node.node_id] = {"Output": _m.group(2)}
                     node_count += 1
@@ -208,7 +181,9 @@ class PySparkGenerator(CodeGenerator):
             out_var = result.output_vars.get("Output")
             successors = dag.get_successors(node.node_id)
             if out_var and len(successors) >= 2:
-                result.code_lines.append(f"{out_var}.cache()  # fan-out node: result reused by multiple downstream steps")
+                result.code_lines.append(
+                    f"{out_var}.cache()  # fan-out node: result reused by multiple downstream steps"
+                )
 
             # Build cell content
             annotation = ""
@@ -221,11 +196,7 @@ class PySparkGenerator(CodeGenerator):
             # For fan-out DB ReadNodes, list the downstream steps so the
             # Alteryx→Databricks mapping remains visible in both directions.
             step_label = node.original_tool_type or type(node).__name__
-            if (
-                isinstance(node, ReadNode)
-                and node.source_type == "database"
-                and len(successors) > 1
-            ):
+            if isinstance(node, ReadNode) and node.source_type == "database" and len(successors) > 1:
                 consumer_ids = ", ".join(str(s.node_id) for s in successors)
                 step_label += f"  (shared by Steps {consumer_ids})"
             step_comment = f"# Step {node.node_id}: {step_label}"
@@ -240,10 +211,30 @@ class PySparkGenerator(CodeGenerator):
             node_count += 1
 
         # Build notebook content
+        # Update metadata with stats for header generation
+        self.metadata["stats"] = {
+            "total_nodes": node_count,
+            "supported_nodes": node_count - unsupported_count,
+            "unsupported_nodes": unsupported_count,
+            "warnings": len(warnings),
+        }
+
+        header_lines = self._build_header_lines(workflow_name, "#")
+        header_cell = "\n".join(header_lines)
+
         import_cell = "\n".join(sorted(all_imports))
         separator = "\n\n# COMMAND ----------\n\n"
-        notebook_body = separator.join([import_cell] + cells)
+        notebook_body = separator.join([header_cell, import_cell, *cells])
         notebook_content = "# Databricks notebook source\n" + separator + notebook_body + "\n"
+
+        # Append footer
+        footer_lines = self._build_footer_lines(notebook_content, "#")
+        notebook_content += separator + "\n".join(footer_lines) + "\n"
+
+        # Validate generated Python syntax
+        syntax_errors = self._validate_python_syntax(notebook_content, f"{workflow_name}.py")
+        if syntax_errors:
+            warnings.extend(syntax_errors)
 
         files = [
             GeneratedFile(
@@ -255,6 +246,7 @@ class PySparkGenerator(CodeGenerator):
 
         stats = {
             "total_nodes": node_count,
+            "supported_nodes": node_count - unsupported_count,
             "unsupported_nodes": unsupported_count,
             "warnings": len(warnings),
         }
@@ -301,7 +293,9 @@ class PySparkGenerator(CodeGenerator):
 
     # -- Node dispatch ------------------------------------------------------
 
-    def _generate_node_code(self, node: IRNode, input_vars: dict[str, str], dag: WorkflowDAG | None = None) -> NodeCodeResult:
+    def _generate_node_code(
+        self, node: IRNode, input_vars: dict[str, str], dag: WorkflowDAG | None = None
+    ) -> NodeCodeResult:
         """Generate PySpark code for a single IR node."""
         type_name = type(node).__name__
         method_name = f"_generate_{type_name}"
@@ -334,15 +328,60 @@ class PySparkGenerator(CodeGenerator):
             if node.encoding and node.encoding != "utf-8":
                 options.append(f'"encoding", "{node.encoding}"')
 
+        if node.source_type == "dataverse":
+            table = node.table_name or "<dataverse_table>"
+            lines = [
+                "# TODO: Microsoft Dataverse input — no native Databricks reader.",
+                f"# Dataverse table (LogicalName): {table}",
+            ]
+            if node.connection_string:
+                lines.append(f"# Original connection: {node.connection_string}")
+            if node.query:
+                safe_query = node.query.replace('"""', '""\\"')
+                lines.append(f"# Original OData query: {safe_query}")
+            lines += [
+                "# Suggested replacements (pick one):",
+                "#   1. Export Dataverse → ADLS via Power Platform, then spark.read.format('parquet').load('abfss://...')",
+                "#   2. Ingest with Fivetran / Airbyte / Hightouch Dataverse connector into a UC table",
+                "#      then: spark.table('catalog.schema.{table}')".replace("{table}", table),
+                "#   3. Custom OData ingest via requests + spark.createDataFrame()",
+                f'{out_var} = spark.createDataFrame([], "id STRING")  # PLACEHOLDER — replace with Dataverse load',
+            ]
+            warnings.append(f"Input node {node.node_id}: Dataverse table '{table}' requires manual ingest setup")
+            if node.record_limit is not None:
+                lines.append(f"{out_var} = {out_var}.limit({node.record_limit})")
+            return NodeCodeResult(
+                code_lines=lines,
+                output_vars={"Output": out_var},
+                warnings=warnings,
+            )
+
         if node.source_type == "database" and node.query:
             lines = []
             if node.connection_string:
                 lines.append(f"# Source database: {node.connection_string}")
                 lines.append("# TODO: Replace the connection below with your Unity Catalog equivalent. Options:")
-                lines.append('#   spark.table("catalog.schema.table_name")                       # UC managed/external table')
-                lines.append('#   spark.sql("SELECT ... FROM catalog.schema.table_name")         # keep SQL, update table ref')
-                lines.append('#   spark.read.format("jdbc").option("url","jdbc:...").option("dbtable","schema.table").load()  # JDBC')
-                warnings.append(f"Input node {node.node_id}: database connection '{node.connection_string}' needs manual mapping")
+                lines.append(
+                    '#   spark.table("catalog.schema.table_name")                       # UC managed/external table'
+                )
+                lines.append(
+                    '#   spark.sql("SELECT ... FROM catalog.schema.table_name")         # keep SQL, update table ref'
+                )
+                lines.append(
+                    '#   spark.table("federated_catalog.schema.table_name")             # Lakehouse Federation (preferred for legacy DBs:'
+                )
+                lines.append(
+                    "#                                                                  #   CREATE FOREIGN CATALOG federated_catalog USING CONNECTION ...;"
+                )
+                lines.append(
+                    "#                                                                  #   docs: https://docs.databricks.com/aws/en/query-federation/)"
+                )
+                lines.append(
+                    '#   spark.read.format("jdbc").option("url","jdbc:...").option("dbtable","schema.table").load()  # JDBC fallback (no UC governance)'
+                )
+                warnings.append(
+                    f"Input node {node.node_id}: database connection '{node.connection_string}' needs manual mapping"
+                )
             normalized_query, _sql_warns = normalize_sql_for_spark(node.query)
             safe_query = normalized_query.replace('"""', '""\\"')
             lines.append(f'{out_var} = spark.sql("""{safe_query}""")')
@@ -356,7 +395,7 @@ class PySparkGenerator(CodeGenerator):
             if "|||" in path:
                 xlsx_path, sheet_hint = path.split("|||", 1)
             lines = [
-                f"# TODO: manual conversion required — Excel files need a dedicated reader.",
+                "# TODO: manual conversion required — Excel files need a dedicated reader.",
                 f"# Original path: {xlsx_path}",
             ]
             if sheet_hint:
@@ -368,7 +407,9 @@ class PySparkGenerator(CodeGenerator):
                 "#   2. Install com.crealytics:spark-excel and use spark.read.format('excel')",
                 f"{out_var} = None  # PLACEHOLDER — replace with Excel read logic",
             ]
-            warnings.append(f"Input node {node.node_id}: Excel file requires manual conversion (no built-in Excel reader)")
+            warnings.append(
+                f"Input node {node.node_id}: Excel file requires manual conversion (no built-in Excel reader)"
+            )
         else:
             option_chain = ""
             if options:
@@ -384,7 +425,9 @@ class PySparkGenerator(CodeGenerator):
                     f"# Original path: {path}",
                     f'{out_var} = spark.read.format("{fmt}"){option_chain}.load("{escaped_path}")',
                 ]
-                warnings.append(f"Input node {node.node_id}: path '{path}' is a local/UNC path — needs migration to cloud storage")
+                warnings.append(
+                    f"Input node {node.node_id}: path '{path}' is a local/UNC path — needs migration to cloud storage"
+                )
             else:
                 lines = [f'{out_var} = spark.read.format("{fmt}"){option_chain}.load("{escaped_path}")']
 
@@ -399,12 +442,23 @@ class PySparkGenerator(CodeGenerator):
 
     def _generate_WriteNode(self, node: WriteNode, input_vars: dict[str, str]) -> NodeCodeResult:
         inp = self._get_single_input(input_vars)
-        fmt = self._map_file_format(node.file_format)
+        fmt = self._map_file_format(node.file_format).strip('"').strip("'")
         mode = node.write_mode or "overwrite"
         warnings: list[str] = []
 
+        # Build .partitionBy() clause if partition fields specified
+        partition_clause = ""
+        if node.partition_fields:
+            pf = ", ".join(f'"{f}"' for f in node.partition_fields)
+            partition_clause = f".partitionBy({pf})"
+
+        # Build .option("compression", ...) clause if specified
+        compression_clause = ""
+        if node.compression:
+            compression_clause = f'.option("compression", "{node.compression}")'
+
         if node.destination_type == "database" and node.table_name:
-            lines = [f'{inp}.write.mode("{mode}").saveAsTable("{self._esc(node.table_name)}")']
+            lines = [f'{inp}.write.mode("{mode}"){partition_clause}.saveAsTable("{self._esc(node.table_name)}")']
         else:
             path = node.file_path or "UNKNOWN_PATH"
             # Unsupported output formats get a comment + Delta fallback
@@ -416,7 +470,7 @@ class PySparkGenerator(CodeGenerator):
                     f"# Original output: {path}",
                     f"# Format '{fmt}' is not natively supported in Databricks.",
                     f"# Writing as Delta table instead. Export to {fmt} if needed.",
-                    f'{inp}.write.mode("{mode}").saveAsTable("{catalog}.{schema}.{table}")',
+                    f'{inp}.write.mode("{mode}"){partition_clause}.saveAsTable("{catalog}.{schema}.{table}")',
                 ]
                 warnings.append(f"Output node {node.node_id}: '{fmt}' format replaced with Delta table")
             else:
@@ -426,11 +480,15 @@ class PySparkGenerator(CodeGenerator):
                         "# WARNING: local/network path detected — not accessible from Databricks.",
                         "# Update the path below to a DBFS path or Unity Catalog Volume.",
                         f"# Original path: {path}",
-                        f'{inp}.write.format("{fmt}").mode("{mode}").save("{escaped_path}")',
+                        f'{inp}.write.format("{fmt}").mode("{mode}"){compression_clause}{partition_clause}.save("{escaped_path}")',
                     ]
-                    warnings.append(f"Output node {node.node_id}: path '{path}' is a local/UNC path — needs migration to cloud storage")
+                    warnings.append(
+                        f"Output node {node.node_id}: path '{path}' is a local/UNC path — needs migration to cloud storage"
+                    )
                 else:
-                    lines = [f'{inp}.write.format("{fmt}").mode("{mode}").save("{escaped_path}")']
+                    lines = [
+                        f'{inp}.write.format("{fmt}").mode("{mode}"){compression_clause}{partition_clause}.save("{escaped_path}")'
+                    ]
 
         return NodeCodeResult(code_lines=lines, output_vars={}, warnings=warnings)
 
@@ -459,7 +517,9 @@ class PySparkGenerator(CodeGenerator):
 
     # -- Preparation nodes --------------------------------------------------
 
-    def _generate_FilterNode(self, node: FilterNode, input_vars: dict[str, str], dag: WorkflowDAG | None = None) -> NodeCodeResult:
+    def _generate_FilterNode(
+        self, node: FilterNode, input_vars: dict[str, str], dag: WorkflowDAG | None = None
+    ) -> NodeCodeResult:
         inp = self._get_single_input(input_vars)
         out_true = f"df_{node.node_id}_true"
         out_false = f"df_{node.node_id}_false"
@@ -472,8 +532,7 @@ class PySparkGenerator(CodeGenerator):
 
         if not node.expression or not node.expression.strip():
             warnings.append(
-                f"Filter node {node.node_id} has no expression — "
-                "passing all rows to True output (no False output)"
+                f"Filter node {node.node_id} has no expression — passing all rows to True output (no False output)"
             )
             lines = [
                 f"# TODO: Filter node {node.node_id} — expression could not be extracted from workflow XML",
@@ -494,7 +553,7 @@ class PySparkGenerator(CodeGenerator):
                 manual_lines = [
                     f"# TODO: manual conversion required — filter expression parse failed: {exc}",
                     f'# Original Alteryx expression: "{raw_escaped}"',
-                    f"# Replace the F.lit(True) placeholder below with the correct PySpark condition.",
+                    "# Replace the F.lit(True) placeholder below with the correct PySpark condition.",
                 ]
                 lines = manual_lines  # will be extended below
                 if need_true and need_false:
@@ -553,13 +612,13 @@ class PySparkGenerator(CodeGenerator):
                 expr = self._translator.translate_string(fixed_expression)
                 warnings.extend(self._translator.warnings)
                 # Bare numeric literal used as a column expression needs F.lit()
-                if re.match(r'^-?\d+(\.\d+)?$', expr.strip()):
+                if _NUMERIC_LITERAL_RE.match(expr.strip()):
                     expr = f"F.lit({expr})"
-            except (BaseTranslationError, ParserError) as exc:
+            except BaseTranslationError as exc:
                 raw_escaped = formula.expression.replace("\\", "\\\\").replace('"', '\\"')
                 expr = "F.lit(None)  # PLACEHOLDER"
                 warnings.append(f"Formula expression fallback for '{formula.output_field}': {exc}")
-                todo_lines.append(f'# TODO: manual conversion required — expression parse failed: {exc}')
+                todo_lines.append(f"# TODO: manual conversion required — expression parse failed: {exc}")
                 todo_lines.append(f'# Original Alteryx expression: "{raw_escaped}"')
             translated.append((formula.output_field, expr))
 
@@ -612,7 +671,7 @@ class PySparkGenerator(CodeGenerator):
         try:
             parser = ExpressionParser()
             ast = parser.parse(expression)
-        except Exception:
+        except BaseTranslationError:
             return expression  # leave unparseable expressions alone
 
         if not isinstance(ast, IfExpr):
@@ -630,8 +689,7 @@ class PySparkGenerator(CodeGenerator):
         escaped_field = output_field.replace('"', '\\"')
         result = expression
         # Use regex to find IF/ELSEIF followed by a bare string literal (not a comparison)
-        result = re.sub(
-            r'((?:ELSE)?IF)\s+"([^"]*)"(\s+THEN)',
+        result = _IMPLICIT_FIELD_RE.sub(
             rf'\1 [{escaped_field}] = "\2"\3',
             result,
         )
@@ -654,8 +712,13 @@ class PySparkGenerator(CodeGenerator):
         if not renames and not drops:
             return NodeCodeResult(code_lines=[], output_vars={"Output": inp})
 
-        # Build a single chained expression: inp.withColumnRenamed(...).drop(...)
-        chain_parts = [f'    .withColumnRenamed("{old}", "{new}")' for old, new in renames]
+        # Build a single chained expression: inp.withColumnsRenamed({...}).drop(...)
+        # withColumnsRenamed (Spark 3.4+, DBR 14.3 LTS+) takes a dict and avoids the
+        # quadratic schema-rebuild cost of a long .withColumnRenamed chain.
+        chain_parts: list[str] = []
+        if renames:
+            rename_entries = ", ".join(f'"{old}": "{new}"' for old, new in renames)
+            chain_parts.append(f"    .withColumnsRenamed({{{rename_entries}}})")
         if drops:
             drop_args = ", ".join(f'"{d}"' for d in drops)
             chain_parts.append(f"    .drop({drop_args})")
@@ -674,7 +737,14 @@ class PySparkGenerator(CodeGenerator):
         sort_exprs: list[str] = []
         for sf in node.sort_fields:
             direction = "asc" if sf.ascending else "desc"
-            sort_exprs.append(f'F.col("{sf.field_name}").{direction}()')
+            expr = f'F.col("{sf.field_name}").{direction}'
+            if sf.nulls_first is True:
+                expr += "_nulls_first()"
+            elif sf.nulls_first is False:
+                expr += "_nulls_last()"
+            else:
+                expr += "()"
+            sort_exprs.append(expr)
 
         sort_str = ", ".join(sort_exprs) if sort_exprs else ""
         lines = [f"{out_var} = {inp}.orderBy({sort_str})"]
@@ -687,19 +757,20 @@ class PySparkGenerator(CodeGenerator):
     def _generate_SampleNode(self, node: SampleNode, input_vars: dict[str, str]) -> NodeCodeResult:
         inp = self._get_single_input(input_vars)
         out_var = f"df_{node.node_id}"
+        seed_arg = f", seed={node.seed}" if node.seed is not None else ""
 
         if node.sample_method in ("first",) and node.n_records is not None:
             lines = [f"{out_var} = {inp}.limit({node.n_records})"]
         elif node.sample_method == "percent" and node.percentage is not None:
             frac = node.percentage / 100.0 if node.percentage > 1 else node.percentage
-            lines = [f"{out_var} = {inp}.sample(fraction={frac})"]
+            lines = [f"{out_var} = {inp}.sample(fraction={frac}{seed_arg})"]
         elif node.sample_method == "random" and node.n_records is not None:
             lines = [
                 f"# Random sample of {node.n_records} records",
                 f"_count_{node.node_id} = {inp}.count()",
                 f"_frac_{node.node_id} = ({node.n_records} * 2 / _count_{node.node_id}) if _count_{node.node_id} > 0 else 1.0",
                 f"_frac_{node.node_id} = _frac_{node.node_id} if _frac_{node.node_id} <= 1.0 else 1.0",
-                f"{out_var} = {inp}.sample(fraction=_frac_{node.node_id}).limit({node.n_records})",
+                f"{out_var} = {inp}.sample(fraction=_frac_{node.node_id}{seed_arg}).limit({node.n_records})",
             ]
         else:
             lines = [
@@ -749,17 +820,24 @@ class PySparkGenerator(CodeGenerator):
         warnings: list[str] = []
 
         # Build window spec
+        # NOTE: monotonically_increasing_id() is non-deterministic — replace with a
+        # deterministic column (e.g. a timestamp or sequence key) for reproducible results.
         if node.group_fields:
             partition = ", ".join(f'"{gf}"' for gf in node.group_fields)
             window_def = f"Window.partitionBy({partition}).orderBy(F.monotonically_increasing_id())"
         else:
             window_def = "Window.orderBy(F.monotonically_increasing_id())"
+        warnings.append(
+            f"MultiRowFormula node {node.node_id}: window ordered by monotonically_increasing_id() "
+            "which is non-deterministic. Replace with a deterministic sort column for reproducible results."
+        )
 
         try:
             expr = self._translator.translate_string(node.expression)
             warnings.extend(self._translator.warnings)
-        except (BaseTranslationError, ParserError) as exc:
-            expr = f'F.expr("{node.expression}")'
+        except BaseTranslationError as exc:
+            safe = node.expression.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+            expr = f'F.expr("{safe}")'
             warnings.append(f"MultiRowFormula expression fallback: {exc}")
 
         # Replace the placeholder 'window' with actual window variable
@@ -790,9 +868,9 @@ class PySparkGenerator(CodeGenerator):
                 expr = self._translator.translate_string(expr_str)
                 warnings.extend(self._translator.warnings)
                 # Bare numeric literal used as a column expression needs F.lit()
-                if re.match(r'^-?\d+(\.\d+)?$', expr.strip()):
+                if _NUMERIC_LITERAL_RE.match(expr.strip()):
                     expr = f"F.lit({expr})"
-            except (BaseTranslationError, ParserError) as exc:
+            except BaseTranslationError as exc:
                 expr = f'F.col("{fld}")  # PLACEHOLDER'
                 warnings.append(f"MultiFieldFormula fallback for field '{fld}': {exc}")
                 todo_lines.append(f'# TODO: MultiFieldFormula fallback for "{fld}": {exc}')
@@ -884,19 +962,16 @@ class PySparkGenerator(CodeGenerator):
         lines.append(f"# GenerateRows: init='{init_expr}', cond='{cond_expr}', loop='{loop_expr}'")
 
         # Attempt to detect simple range pattern
-        range_match = re.search(r'(\w+)\s*<=?\s*(\d+)', cond_expr)
-        init_match = re.search(r'(\w+)\s*=\s*(\d+)', init_expr)
+        range_match = re.search(r"(\w+)\s*<=?\s*(\d+)", cond_expr)
+        init_match = re.search(r"(\w+)\s*=\s*(\d+)", init_expr)
 
         if init_match and range_match:
             start_val = int(init_match.group(2))
             end_val = int(range_match.group(2))
-            if '<=' in cond_expr:
+            if "<=" in cond_expr:
                 end_val += 1
             output_field = node.output_field or init_match.group(1)
-            lines.append(
-                f'{out_var} = spark.range({start_val}, {end_val})'
-                f'.withColumnRenamed("id", "{output_field}")'
-            )
+            lines.append(f'{out_var} = spark.range({start_val}, {end_val}).withColumnRenamed("id", "{output_field}")')
         else:
             # Fallback: generate a UDF-based approach with manual guidance
             output_field = node.output_field or "GeneratedRow"
@@ -904,13 +979,17 @@ class PySparkGenerator(CodeGenerator):
             lines.append(f'{out_var} = spark.range(0, 1000).withColumnRenamed("id", "{output_field}")')
             if cond_expr:
                 try:
-                    expr = self._translator.translate_string(cond_expr.replace(node.output_field or "i", f"[{output_field}]"))
+                    expr = self._translator.translate_string(
+                        cond_expr.replace(node.output_field or "i", f"[{output_field}]")
+                    )
                     lines.append(f"{out_var} = {out_var}.filter({expr})")
                 except BaseTranslationError:
-                    lines.append(f'# Apply condition filter: {cond_expr}')
+                    lines.append(f"# Apply condition filter: {cond_expr}")
                     warnings.append(f"GenerateRows (node {node.node_id}): complex condition may need manual adjustment")
             if loop_expr and loop_expr != f"{output_field}+1" and loop_expr != f"{output_field} + 1":
-                warnings.append(f"GenerateRows (node {node.node_id}): loop expression '{loop_expr}' may need manual adjustment")
+                warnings.append(
+                    f"GenerateRows (node {node.node_id}): loop expression '{loop_expr}' may need manual adjustment"
+                )
 
         return NodeCodeResult(
             code_lines=lines,
@@ -920,7 +999,9 @@ class PySparkGenerator(CodeGenerator):
 
     # -- Join nodes ---------------------------------------------------------
 
-    def _generate_JoinNode(self, node: JoinNode, input_vars: dict[str, str], dag: WorkflowDAG | None = None) -> NodeCodeResult:
+    def _generate_JoinNode(
+        self, node: JoinNode, input_vars: dict[str, str], dag: WorkflowDAG | None = None
+    ) -> NodeCodeResult:
         left_var = input_vars.get("Left", input_vars.get("Input", "MISSING_LEFT"))
         right_var = input_vars.get("Right", "MISSING_RIGHT")
         out_join = f"df_{node.node_id}_join"
@@ -949,30 +1030,62 @@ class PySparkGenerator(CodeGenerator):
         output_vars: dict[str, str] = {}
         warnings: list[str] = []
         if no_keys_warning:
-            lines.append(f"# TODO: Join node {node.node_id} has no join keys — replace F.lit(True) with the correct condition")
+            lines.append(
+                f"# TODO: Join node {node.node_id} has no join keys — replace F.lit(True) with the correct condition"
+            )
             warnings.append(f"Join node {node.node_id}: no join keys found — manual condition required")
 
+        # Detect broadcast candidates: small lookup inputs (LiteralData or single-use ReadNodes)
+        broadcast_side: str | None = None  # "left" or "right"
+        if dag is not None:
+            from a2d.ir.nodes import LiteralDataNode
+
+            predecessors = dag.get_predecessors(node.node_id)
+            for pred in predecessors:
+                if isinstance(pred, LiteralDataNode):
+                    # Determine which side this predecessor feeds
+                    if f"df_{pred.node_id}" in right_var or right_var in (f"df_{pred.node_id}",):
+                        broadcast_side = "right"
+                    elif f"df_{pred.node_id}" in left_var or left_var in (f"df_{pred.node_id}",):
+                        broadcast_side = "left"
+                    break
+
+        # Apply broadcast wrapping
+        join_left = left_var
+        join_right = right_var
+        if broadcast_side == "right":
+            join_right = f"F.broadcast({right_var})"
+        elif broadcast_side == "left":
+            join_left = f"F.broadcast({left_var})"
+
         if need_join or (not need_left and not need_right):
-            # Build post-join column ops as a single chain: renames first, then drops
+            # Build post-join column ops as a single chain: batched renames first,
+            # then drops. Use .withColumnsRenamed({...}) (Spark 3.4+, DBR 14.3 LTS+)
+            # to avoid the quadratic schema-rebuild cost of a long
+            # .withColumnRenamed chain.
             post_ops: list[str] = []
+            renames: list[tuple[str, str]] = []
             for op in node.select_left + node.select_right:
                 if op.action.value == "rename" and op.rename_to and op.rename_to != op.field_name:
-                    post_ops.append(f'    .withColumnRenamed("{op.field_name}", "{op.rename_to}")')
+                    renames.append((op.field_name, op.rename_to))
+            if renames:
+                rename_entries = ", ".join(f'"{old}": "{new}"' for old, new in renames)
+                post_ops.append(f"    .withColumnsRenamed({{{rename_entries}}})")
             drops_post = []
             for op in node.select_left + node.select_right:
                 if not op.selected:
                     drop_name = op.rename_to if (op.rename_to and op.rename_to != op.field_name) else op.field_name
                     drops_post.append(f'"{drop_name}"')
             if drops_post:
-                post_ops.append(f'    .drop({", ".join(drops_post)})')
+                post_ops.append(f"    .drop({', '.join(drops_post)})")
 
             if post_ops:
                 chain_body = "\n".join(post_ops)
                 lines.append(
-                    f'{out_join} = (\n    {left_var}.join({right_var}, {condition}, "{join_type}")\n{chain_body}\n)'
+                    f'{out_join} = (\n    {join_left}.join({join_right}, {condition}, "{join_type}")\n{chain_body}\n)'
                 )
             else:
-                lines.append(f'{out_join} = {left_var}.join({right_var}, {condition}, "{join_type}")')
+                lines.append(f'{out_join} = {join_left}.join({join_right}, {condition}, "{join_type}")')
             output_vars["Join"] = out_join
             output_vars["Output"] = out_join
         if need_left:
@@ -1016,13 +1129,19 @@ class PySparkGenerator(CodeGenerator):
         source = input_vars.get("Source", "MISSING_SOURCE")
         out_var = f"df_{node.node_id}"
 
+        warnings: list[str] = []
         lines = [
-            "# AppendFields: cross join (target x source)",
-            f"{out_var} = {target}.crossJoin({source})",
+            "# AppendFields: cross join with broadcast (source should be a single-row lookup)",
+            f"{out_var} = {target}.crossJoin(F.broadcast({source}.limit(1)))",
         ]
+        warnings.append(
+            f"AppendFields node {node.node_id}: source limited to 1 row via .limit(1). "
+            "Remove .limit(1) if source intentionally has multiple rows."
+        )
         return NodeCodeResult(
             code_lines=lines,
             output_vars={"Output": out_var},
+            warnings=warnings,
         )
 
     def _generate_FindReplaceNode(self, node: FindReplaceNode, input_vars: dict[str, str]) -> NodeCodeResult:
@@ -1038,29 +1157,59 @@ class PySparkGenerator(CodeGenerator):
 
         if node.find_mode == "exact":
             if not node.case_sensitive:
-                lines.append(f'_lookup_{node.node_id} = {lookup_var}.withColumn("_find_key", F.lower(F.col("{find_field}")))')
-                lines.append(f'_main_{node.node_id} = {target_var}.withColumn("_find_key", F.lower(F.col("{find_field}")))')
+                lines.append(
+                    f'_lookup_{node.node_id} = {lookup_var}.withColumn("_find_key", F.lower(F.col("{find_field}")))'
+                )
+                lines.append(
+                    f'_main_{node.node_id} = {target_var}.withColumn("_find_key", F.lower(F.col("{find_field}")))'
+                )
                 join_cond = f'_main_{node.node_id}["_find_key"] == _lookup_{node.node_id}["_find_key"]'
-                lines.append(f'{out_var} = _main_{node.node_id}.join(_lookup_{node.node_id}.select("_find_key", F.col("{replace_field}").alias("_replace_val_{node.node_id}")), {join_cond}, "left")')
-                lines.append(f'{out_var} = {out_var}.withColumn("{find_field}", F.coalesce(F.col("_replace_val_{node.node_id}"), F.col("{find_field}")))')
+                lines.append(
+                    f'{out_var} = _main_{node.node_id}.join(_lookup_{node.node_id}.select("_find_key", F.col("{replace_field}").alias("_replace_val_{node.node_id}")), {join_cond}, "left")'
+                )
+                lines.append(
+                    f'{out_var} = {out_var}.withColumn("{find_field}", F.coalesce(F.col("_replace_val_{node.node_id}"), F.col("{find_field}")))'
+                )
                 lines.append(f'{out_var} = {out_var}.drop("_find_key", "_replace_val_{node.node_id}")')
             else:
-                lines.append(f'_lookup_{node.node_id} = {lookup_var}.select(F.col("{find_field}").alias("_find_val"), F.col("{replace_field}").alias("_replace_val_{node.node_id}"))')
-                lines.append(f'{out_var} = {target_var}.join(_lookup_{node.node_id}, {target_var}["{find_field}"] == _lookup_{node.node_id}["_find_val"], "left")')
-                lines.append(f'{out_var} = {out_var}.withColumn("{find_field}", F.coalesce(F.col("_replace_val_{node.node_id}"), F.col("{find_field}")))')
+                lines.append(
+                    f'_lookup_{node.node_id} = {lookup_var}.select(F.col("{find_field}").alias("_find_val"), F.col("{replace_field}").alias("_replace_val_{node.node_id}"))'
+                )
+                lines.append(
+                    f'{out_var} = {target_var}.join(_lookup_{node.node_id}, {target_var}["{find_field}"] == _lookup_{node.node_id}["_find_val"], "left")'
+                )
+                lines.append(
+                    f'{out_var} = {out_var}.withColumn("{find_field}", F.coalesce(F.col("_replace_val_{node.node_id}"), F.col("{find_field}")))'
+                )
                 lines.append(f'{out_var} = {out_var}.drop("_find_val", "_replace_val_{node.node_id}")')
         elif node.find_mode == "contains":
-            lines.append("# Contains-mode find/replace using regexp_replace")
-            lines.append(f'{out_var} = {target_var}')
-            lines.append("# Note: For contains mode with lookup table, iterate over lookup values")
-            warnings.append(f"FindReplace contains mode (node {node.node_id}) may need manual adjustment for lookup-based replace")
+            # Collect lookup values (small table) and apply regexp_replace for each
+            lines.append("# Contains-mode find/replace: collect lookup pairs, apply sequentially")
+            lines.append(f'_pairs_{node.node_id} = {lookup_var}.select("{find_field}", "{replace_field}").collect()')
+            lines.append(f"{out_var} = {target_var}")
+            target_col = node.target_fields[0] if node.target_fields else find_field
+            lines.append(f"for _pair in _pairs_{node.node_id}:")
+            lines.append(
+                f'    {out_var} = {out_var}.withColumn("{target_col}", F.regexp_replace(F.col("{target_col}"), F.lit(_pair["{find_field}"]), F.lit(_pair["{replace_field}"])))'
+            )
+            warnings.append(
+                f"FindReplace contains mode (node {node.node_id}): lookup table collected to driver — ensure it is small"
+            )
         elif node.find_mode == "regex":
-            lines.append("# Regex-mode find/replace")
-            lines.append(f'{out_var} = {target_var}')
-            lines.append("# Note: For regex mode with lookup table, iterate over lookup patterns")
-            warnings.append(f"FindReplace regex mode (node {node.node_id}) may need manual adjustment")
+            # Same approach but patterns are regex
+            lines.append("# Regex-mode find/replace: collect lookup patterns, apply sequentially")
+            lines.append(f'_pairs_{node.node_id} = {lookup_var}.select("{find_field}", "{replace_field}").collect()')
+            lines.append(f"{out_var} = {target_var}")
+            target_col = node.target_fields[0] if node.target_fields else find_field
+            lines.append(f"for _pair in _pairs_{node.node_id}:")
+            lines.append(
+                f'    {out_var} = {out_var}.withColumn("{target_col}", F.regexp_replace(F.col("{target_col}"), _pair["{find_field}"], _pair["{replace_field}"]))'
+            )
+            warnings.append(
+                f"FindReplace regex mode (node {node.node_id}): lookup table collected to driver — ensure it is small"
+            )
         else:
-            lines.append(f'{out_var} = {target_var}')
+            lines.append(f"{out_var} = {target_var}")
             warnings.append(f"FindReplace mode '{node.find_mode}' (node {node.node_id}) may need manual adjustment")
 
         return NodeCodeResult(
@@ -1080,10 +1229,12 @@ class PySparkGenerator(CodeGenerator):
             join_type = node.join_type or "inner"
             lines = [f"{out_var} = {sorted_inputs[0][1]}"]
 
-            for i, (anchor, var_name) in enumerate(sorted_inputs[1:], start=1):
+            for i, (_anchor, var_name) in enumerate(sorted_inputs[1:], start=1):
                 if node.join_keys:
                     # Use key fields - handle potential column name conflicts with aliases
-                    key_parts = [f'{out_var}["{jk.left_field}"] == {var_name}["{jk.right_field}"]' for jk in node.join_keys]
+                    key_parts = [
+                        f'{out_var}["{jk.left_field}"] == {var_name}["{jk.right_field}"]' for jk in node.join_keys
+                    ]
                     condition = " & ".join(f"({kp})" for kp in key_parts)
                     if len(key_parts) == 1:
                         condition = key_parts[0]
@@ -1144,9 +1295,7 @@ class PySparkGenerator(CodeGenerator):
             ]
         else:
             num = node.num_columns or 5
-            entries = ",\n    ".join(
-                f'"{root}_{i + 1}": _split_{node.node_id}[{i}]' for i in range(num)
-            )
+            entries = ",\n    ".join(f'"{root}_{i + 1}": _split_{node.node_id}[{i}]' for i in range(num))
             lines = [
                 f'_split_{node.node_id} = F.split(F.col("{node.field_name}"), "{node.delimiter}")',
                 f"{out_var} = {inp}.withColumns({{\n    {entries},\n}})",
@@ -1406,7 +1555,9 @@ class PySparkGenerator(CodeGenerator):
                 lines.append(f'{out_var} = {out_var}.na.fill({{"{fld}": _median_{fld}_{node.node_id}}})')
         elif node.method == "mode":
             for fld in node.fields:
-                lines.append(f'_mode_{fld}_{node.node_id} = {out_var}.groupBy("{fld}").count().orderBy(F.desc("count")).first()[0]')
+                lines.append(
+                    f'_mode_{fld}_{node.node_id} = {out_var}.groupBy("{fld}").count().orderBy(F.desc("count")).first()[0]'
+                )
                 lines.append(f'{out_var} = {out_var}.na.fill({{"{fld}": _mode_{fld}_{node.node_id}}})')
         else:
             lines.append(f'{out_var} = {out_var}.na.fill("")')
@@ -1419,20 +1570,30 @@ class PySparkGenerator(CodeGenerator):
         lines.append(f"{out_var} = {inp}")
         if node.xpath_expressions:
             for xpath, name in node.xpath_expressions:
-                lines.append(f'{out_var} = {out_var}.withColumn("{name}", F.xpath_string(F.col("{node.input_field}"), F.lit("{xpath}")))')
+                lines.append(
+                    f'{out_var} = {out_var}.withColumn("{name}", F.xpath_string(F.col("{node.input_field}"), F.lit("{xpath}")))'
+                )
         elif node.output_field:
             lines.append(f'{out_var} = {out_var}.withColumn("{node.output_field}", F.col("{node.input_field}"))')
         return NodeCodeResult(
             code_lines=lines,
             output_vars={"Output": out_var},
-            warnings=[f"XMLParse (node {node.node_id}): verify xpath_string function availability"] if node.xpath_expressions else [],
+            warnings=[f"XMLParse (node {node.node_id}): verify xpath_string function availability"]
+            if node.xpath_expressions
+            else [],
         )
 
     def _generate_TileNode(self, node: TileNode, input_vars: dict[str, str]) -> NodeCodeResult:
         inp = self._get_single_input(input_vars)
         out_var = f"df_{node.node_id}"
         imports = ["from pyspark.sql import Window"]
-        order = f'"{node.order_field}"' if node.order_field else f'"{node.tile_field}"' if node.tile_field else "F.monotonically_increasing_id()"
+        order = (
+            f'"{node.order_field}"'
+            if node.order_field
+            else f'"{node.tile_field}"'
+            if node.tile_field
+            else "F.monotonically_increasing_id()"
+        )
         if node.group_fields:
             partition = ", ".join(f'"{gf}"' for gf in node.group_fields)
             window = f"Window.partitionBy({partition}).orderBy({order})"
@@ -1451,15 +1612,15 @@ class PySparkGenerator(CodeGenerator):
         if node.group_fields:
             gb = ", ".join(f'"{gf}"' for gf in node.group_fields)
             lines.append(
-                f'{out_var} = {inp}.groupBy({gb}).agg('
+                f"{out_var} = {inp}.groupBy({gb}).agg("
                 f'(F.sum(F.col("{node.value_field}") * F.col("{node.weight_field}")) / F.sum(F.col("{node.weight_field}"))).alias("{node.output_field}")'
-                f')'
+                f")"
             )
         else:
             lines.append(
-                f'{out_var} = {inp}.agg('
+                f"{out_var} = {inp}.agg("
                 f'(F.sum(F.col("{node.value_field}") * F.col("{node.weight_field}")) / F.sum(F.col("{node.weight_field}"))).alias("{node.output_field}")'
-                f')'
+                f")"
             )
         return NodeCodeResult(code_lines=lines, output_vars={"Output": out_var})
 
@@ -1475,10 +1636,9 @@ class PySparkGenerator(CodeGenerator):
             lines: list[str] = [
                 f"# DynamicInput (ModifySQL): executes parameterized SQL once per row of {inp}",
                 f"# Source connection: {node.template_connection}",
-                "# TODO: Replace the connection below with your Unity Catalog equivalent. Options:",
-                '#   spark.table("catalog.schema.table_name")                       # UC managed/external table',
-                '#   spark.sql("SELECT ... FROM catalog.schema.table_name")         # keep SQL, update table ref',
-                '#   spark.read.format("jdbc").option("url","jdbc:...").option("dbtable","schema.table").load()  # JDBC',
+                "# TODO: Replace the connection below with your Unity Catalog equivalent.",
+                f"# WARNING: This collects the input DataFrame to the driver. Ensure {inp} is small (<10k rows).",
+                f"assert {inp}.count() <= 10000, f'DynamicInput node {node.node_id}: input has {{%s}} rows — too large for driver collect. Filter or sample first.' % {inp}.count()",
                 f"_rows_{node.node_id} = {inp}.collect()",
                 f"_dfs_{node.node_id} = []",
                 f"for _row in _rows_{node.node_id}:",
@@ -1523,7 +1683,9 @@ class PySparkGenerator(CodeGenerator):
         path = node.file_path_expression or "dynamic_output"
         lines = ["# DynamicOutput: write to partitioned destination"]
         if node.partition_field:
-            lines.append(f'{inp}.write.format("{fmt}").partitionBy("{node.partition_field}").mode("overwrite").save("{path}")')
+            lines.append(
+                f'{inp}.write.format("{fmt}").partitionBy("{node.partition_field}").mode("overwrite").save("{path}")'
+            )
         else:
             lines.append(f'{inp}.write.format("{fmt}").mode("overwrite").save("{path}")')
         lines.append(f"{out_var} = {inp}  # passthrough after write")
@@ -1556,14 +1718,16 @@ class PySparkGenerator(CodeGenerator):
             lines = [f"# MacroOutput: {node.field_name}"]
             if inp:
                 lines.append(f"{out_var} = {inp}")
-        return NodeCodeResult(code_lines=lines, output_vars={"Output": out_var} if node.direction == "output" and input_vars else {})
+        return NodeCodeResult(
+            code_lines=lines, output_vars={"Output": out_var} if node.direction == "output" and input_vars else {}
+        )
 
     def _generate_FieldSummaryNode(self, node: FieldSummaryNode, input_vars: dict[str, str]) -> NodeCodeResult:
         inp = self._get_single_input(input_vars)
         out_var = f"df_{node.node_id}"
         if node.fields:
             cols = ", ".join(f'"{f}"' for f in node.fields)
-            lines = [f'{out_var} = {inp}.select({cols}).describe()']
+            lines = [f"{out_var} = {inp}.select({cols}).describe()"]
         else:
             lines = [f"{out_var} = {inp}.describe()"]
         return NodeCodeResult(code_lines=lines, output_vars={"Output": out_var})
@@ -1573,7 +1737,9 @@ class PySparkGenerator(CodeGenerator):
         default = f', "{self._esc(node.default_value)}"' if node.default_value else ""
         if node.widget_type in ("dropdown", "listbox") and node.options:
             choices = ", ".join(f'"{self._esc(o)}"' for o in node.options)
-            lines = [f'dbutils.widgets.dropdown("{esc_name}", "{self._esc(node.options[0]) if node.options else ""}",  [{choices}])']
+            lines = [
+                f'dbutils.widgets.dropdown("{esc_name}", "{self._esc(node.options[0]) if node.options else ""}",  [{choices}])'
+            ]
         elif node.widget_type == "checkbox":
             lines = [f'dbutils.widgets.dropdown("{esc_name}", "False", ["True", "False"])']
         else:
@@ -1631,7 +1797,8 @@ class PySparkGenerator(CodeGenerator):
             f"{out_var} = {inp}",
         ]
         return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
+            code_lines=lines,
+            output_vars={"Output": out_var},
             warnings=[f"EmailOutput (node {node.node_id}): manual conversion needed for email sending"],
         )
 
@@ -1659,7 +1826,7 @@ class PySparkGenerator(CodeGenerator):
         lines = [
             "# Spatial match using Mosaic st_intersects",
             "# Requires: import mosaic; mosaic.enable_mosaic(spark)",
-            f'{out_var} = {left_var}.join({right_var}, '
+            f"{out_var} = {left_var}.join({right_var}, "
             f'F.expr("st_intersects({left_var}.{node.spatial_field_target}, '
             f'{right_var}.{node.spatial_field_universe})"), "inner")',
         ]
@@ -1690,10 +1857,10 @@ class PySparkGenerator(CodeGenerator):
         lines = [
             f"# Distance: Haversine formula ({node.distance_units})",
             f"# Using source='{node.source_field}' and target='{node.target_field}'",
-            f"_lat1_{node.node_id} = F.radians(F.col(\"{node.source_field}.lat\"))",
-            f"_lon1_{node.node_id} = F.radians(F.col(\"{node.source_field}.lon\"))",
-            f"_lat2_{node.node_id} = F.radians(F.col(\"{node.target_field}.lat\"))",
-            f"_lon2_{node.node_id} = F.radians(F.col(\"{node.target_field}.lon\"))",
+            f'_lat1_{node.node_id} = F.radians(F.col("{node.source_field}.lat"))',
+            f'_lon1_{node.node_id} = F.radians(F.col("{node.source_field}.lon"))',
+            f'_lat2_{node.node_id} = F.radians(F.col("{node.target_field}.lat"))',
+            f'_lon2_{node.node_id} = F.radians(F.col("{node.target_field}.lon"))',
             f"_distance_expr_{node.node_id} = F.acos(",
             f"    F.sin(_lat1_{node.node_id}) * F.sin(_lat2_{node.node_id}) +",
             f"    F.cos(_lat1_{node.node_id}) * F.cos(_lat2_{node.node_id}) *",
@@ -1716,24 +1883,29 @@ class PySparkGenerator(CodeGenerator):
             f"# FindNearest: cross join + Haversine distance + rank (max_matches={node.max_matches})",
             f"_cross_{node.node_id} = {target_var}.crossJoin({universe_var})",
             "# Compute Haversine distance between target and universe points",
-            f"_lat1_{node.node_id} = F.radians(F.col(\"{node.target_field}.lat\"))",
-            f"_lon1_{node.node_id} = F.radians(F.col(\"{node.target_field}.lon\"))",
-            f"_lat2_{node.node_id} = F.radians(F.col(\"{node.universe_field}.lat\"))",
-            f"_lon2_{node.node_id} = F.radians(F.col(\"{node.universe_field}.lon\"))",
+            f'_lat1_{node.node_id} = F.radians(F.col("{node.target_field}.lat"))',
+            f'_lon1_{node.node_id} = F.radians(F.col("{node.target_field}.lon"))',
+            f'_lat2_{node.node_id} = F.radians(F.col("{node.universe_field}.lat"))',
+            f'_lon2_{node.node_id} = F.radians(F.col("{node.universe_field}.lon"))',
             f"_dist_expr_{node.node_id} = F.acos(",
             f"    F.sin(_lat1_{node.node_id}) * F.sin(_lat2_{node.node_id}) +",
             f"    F.cos(_lat1_{node.node_id}) * F.cos(_lat2_{node.node_id}) *",
             f"    F.cos(_lon2_{node.node_id} - _lon1_{node.node_id})",
             f") * {radius}",
             f'_with_dist_{node.node_id} = _cross_{node.node_id}.withColumn("{node.output_distance_field}", _dist_expr_{node.node_id})',
-            f"_window_{node.node_id} = Window.partitionBy({target_var}.columns[0]).orderBy(F.col(\"{node.output_distance_field}\"))",
+            f'_window_{node.node_id} = Window.partitionBy({target_var}.columns[0]).orderBy(F.col("{node.output_distance_field}"))',
             f'_ranked_{node.node_id} = _with_dist_{node.node_id}.withColumn("_rank_{node.node_id}", F.row_number().over(_window_{node.node_id}))',
             f'{out_var} = _ranked_{node.node_id}.filter(F.col("_rank_{node.node_id}") <= {node.max_matches}).drop("_rank_{node.node_id}")',
         ]
         warnings = [f"FindNearestNode (node {node.node_id}): verify partition key and lat/lon struct field names"]
         if node.max_distance is not None:
-            lines.insert(-1, f'{out_var} = _with_dist_{node.node_id}.filter(F.col("{node.output_distance_field}") <= {node.max_distance})')
-            warnings.append(f"FindNearestNode (node {node.node_id}): max_distance={node.max_distance} {node.distance_units} filter applied")
+            lines.insert(
+                -1,
+                f'{out_var} = _with_dist_{node.node_id}.filter(F.col("{node.output_distance_field}") <= {node.max_distance})',
+            )
+            warnings.append(
+                f"FindNearestNode (node {node.node_id}): max_distance={node.max_distance} {node.distance_units} filter applied"
+            )
         return NodeCodeResult(
             code_lines=lines,
             output_vars={"Output": out_var},
@@ -1743,7 +1915,9 @@ class PySparkGenerator(CodeGenerator):
     def _generate_GeocoderNode(self, node: GeocoderNode, input_vars: dict[str, str]) -> NodeCodeResult:
         inp = self._get_single_input(input_vars)
         out_var = f"df_{node.node_id}"
-        address_fields = [f for f in [node.address_field, node.city_field, node.state_field, node.zip_field, node.country_field] if f]
+        address_fields = [
+            f for f in [node.address_field, node.city_field, node.state_field, node.zip_field, node.country_field] if f
+        ]
         lines = [
             "# Geocoder: convert address fields to coordinates",
             f"# Input fields: {', '.join(address_fields)}",
@@ -1771,7 +1945,9 @@ class PySparkGenerator(CodeGenerator):
         return NodeCodeResult(
             code_lines=lines,
             output_vars={"Output": out_var},
-            warnings=[f"TradeAreaNode (node {node.node_id}): requires Databricks Mosaic library (st_buffer); multi-ring trade areas need manual adjustment"],
+            warnings=[
+                f"TradeAreaNode (node {node.node_id}): requires Databricks Mosaic library (st_buffer); multi-ring trade areas need manual adjustment"
+            ],
         )
 
     def _generate_MakeGridNode(self, node: MakeGridNode, input_vars: dict[str, str]) -> NodeCodeResult:
@@ -1788,530 +1964,33 @@ class PySparkGenerator(CodeGenerator):
         return NodeCodeResult(
             code_lines=lines,
             output_vars={"Output": out_var},
-            warnings=[f"MakeGridNode (node {node.node_id}): requires H3 library; adjust resolution ({resolution}) based on grid_size={node.grid_size} {node.grid_units}"],
+            warnings=[
+                f"MakeGridNode (node {node.node_id}): requires H3 library; adjust resolution ({resolution}) based on grid_size={node.grid_size} {node.grid_units}"
+            ],
         )
 
     # -- Predictive / ML nodes ----------------------------------------------
 
-    def _generate_DecisionTreeNode(self, node: DecisionTreeNode, input_vars: dict[str, str]) -> NodeCodeResult:
+    def _generate_PredictiveModelNode(self, node: PredictiveModelNode, input_vars: dict[str, str]) -> NodeCodeResult:
+        """Generic handler for all predictive/ML tool types — emits passthrough with TODO."""
         inp = self._get_single_input(input_vars)
         out_var = f"df_{node.node_id}"
-        features_repr = repr(node.feature_fields) if node.feature_fields else '["feature1", "feature2"]'
-        model_class = "DecisionTreeClassifier" if node.model_type == "classification" else "DecisionTreeRegressor"
-        model_import = f"from pyspark.ml.classification import {model_class}" if node.model_type == "classification" else f"from pyspark.ml.regression import {model_class}"
+        tool = node.model_type or node.original_tool_type
+        parts = [f"target='{node.target_field}'"] if node.target_field else []
+        if node.feature_fields:
+            parts.append(f"features={node.feature_fields!r}")
+        for k, v in sorted(node.config.items()):
+            parts.append(f"{k}={v!r}")
+        params = ", ".join(parts)
         lines = [
-            f"# DecisionTree ({node.model_type}): target='{node.target_field}', max_depth={node.max_depth}",
-            f"_assembler_{node.node_id} = VectorAssembler(inputCols={features_repr}, outputCol=\"features_{node.node_id}\")",
-            f'_dt_{node.node_id} = {model_class}(featuresCol="features_{node.node_id}", labelCol="{node.target_field}", '
-            f"maxDepth={node.max_depth}, predictionCol=\"{node.output_field}\")",
-            f"_pipeline_{node.node_id} = Pipeline(stages=[_assembler_{node.node_id}, _dt_{node.node_id}])",
-            f"_model_{node.node_id} = _pipeline_{node.node_id}.fit({inp})",
-            f"{out_var} = _model_{node.node_id}.transform({inp})",
+            f"# {tool}: {params}" if params else f"# {tool}: no configuration extracted",
+            "# TODO: Convert to Spark MLlib or equivalent — manual implementation required",
+            f"{out_var} = {inp}  # passthrough placeholder",
         ]
         return NodeCodeResult(
             code_lines=lines,
             output_vars={"Output": out_var},
-            imports={
-                model_import,
-                "from pyspark.ml.feature import VectorAssembler",
-                "from pyspark.ml import Pipeline",
-            },
-            warnings=[f"DecisionTreeNode (node {node.node_id}): verify feature columns and label column types"],
-        )
-
-    def _generate_ForestModelNode(self, node: ForestModelNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        features_repr = repr(node.feature_fields) if node.feature_fields else '["feature1", "feature2"]'
-        model_class = "RandomForestClassifier" if node.model_type == "classification" else "RandomForestRegressor"
-        model_import = f"from pyspark.ml.classification import {model_class}" if node.model_type == "classification" else f"from pyspark.ml.regression import {model_class}"
-        lines = [
-            f"# RandomForest ({node.model_type}): target='{node.target_field}', trees={node.num_trees}, max_depth={node.max_depth}",
-            f"_assembler_{node.node_id} = VectorAssembler(inputCols={features_repr}, outputCol=\"features_{node.node_id}\")",
-            f'_rf_{node.node_id} = {model_class}(featuresCol="features_{node.node_id}", labelCol="{node.target_field}", '
-            f"numTrees={node.num_trees}, maxDepth={node.max_depth}, predictionCol=\"{node.output_field}\")",
-            f"_pipeline_{node.node_id} = Pipeline(stages=[_assembler_{node.node_id}, _rf_{node.node_id}])",
-            f"_model_{node.node_id} = _pipeline_{node.node_id}.fit({inp})",
-            f"{out_var} = _model_{node.node_id}.transform({inp})",
-        ]
-        return NodeCodeResult(
-            code_lines=lines,
-            output_vars={"Output": out_var},
-            imports={
-                model_import,
-                "from pyspark.ml.feature import VectorAssembler",
-                "from pyspark.ml import Pipeline",
-            },
-            warnings=[f"ForestModelNode (node {node.node_id}): verify feature columns and label column types"],
-        )
-
-    def _generate_LinearRegressionNode(self, node: LinearRegressionNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        features_repr = repr(node.feature_fields) if node.feature_fields else '["feature1", "feature2"]'
-        lines = [
-            f"# LinearRegression: target='{node.target_field}', regularization={node.regularization}",
-            f"_assembler_{node.node_id} = VectorAssembler(inputCols={features_repr}, outputCol=\"features_{node.node_id}\")",
-            f'_lr_{node.node_id} = LinearRegression(featuresCol="features_{node.node_id}", labelCol="{node.target_field}", '
-            f"regParam={node.regularization}, predictionCol=\"{node.output_field}\")",
-            f"_pipeline_{node.node_id} = Pipeline(stages=[_assembler_{node.node_id}, _lr_{node.node_id}])",
-            f"_model_{node.node_id} = _pipeline_{node.node_id}.fit({inp})",
-            f"{out_var} = _model_{node.node_id}.transform({inp})",
-        ]
-        return NodeCodeResult(
-            code_lines=lines,
-            output_vars={"Output": out_var},
-            imports={
-                "from pyspark.ml.regression import LinearRegression",
-                "from pyspark.ml.feature import VectorAssembler",
-                "from pyspark.ml import Pipeline",
-            },
-            warnings=[f"LinearRegressionNode (node {node.node_id}): verify feature columns are numeric"],
-        )
-
-    def _generate_LogisticRegressionNode(self, node: LogisticRegressionNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        features_repr = repr(node.feature_fields) if node.feature_fields else '["feature1", "feature2"]'
-        lines = [
-            f"# LogisticRegression: target='{node.target_field}', regularization={node.regularization}, maxIter={node.max_iterations}",
-            f"_assembler_{node.node_id} = VectorAssembler(inputCols={features_repr}, outputCol=\"features_{node.node_id}\")",
-            f'_logr_{node.node_id} = LogisticRegression(featuresCol="features_{node.node_id}", labelCol="{node.target_field}", '
-            f"regParam={node.regularization}, maxIter={node.max_iterations}, predictionCol=\"{node.output_field}\")",
-            f"_pipeline_{node.node_id} = Pipeline(stages=[_assembler_{node.node_id}, _logr_{node.node_id}])",
-            f"_model_{node.node_id} = _pipeline_{node.node_id}.fit({inp})",
-            f"{out_var} = _model_{node.node_id}.transform({inp})",
-        ]
-        return NodeCodeResult(
-            code_lines=lines,
-            output_vars={"Output": out_var},
-            imports={
-                "from pyspark.ml.classification import LogisticRegression",
-                "from pyspark.ml.feature import VectorAssembler",
-                "from pyspark.ml import Pipeline",
-            },
-            warnings=[f"LogisticRegressionNode (node {node.node_id}): verify label column is binary/categorical"],
-        )
-
-    def _generate_ScoreModelNode(self, node: ScoreModelNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        features_repr = repr(node.feature_fields) if node.feature_fields else '["feature1", "feature2"]'
-        model_ref = node.model_reference or "UNKNOWN_MODEL_PATH"
-        lines = [
-            "# ScoreModel: load model and score data",
-            f"# Model reference: {model_ref}",
-            f"_assembler_{node.node_id} = VectorAssembler(inputCols={features_repr}, outputCol=\"features_{node.node_id}\")",
-            f"_prepared_{node.node_id} = _assembler_{node.node_id}.transform({inp})",
-            "# TODO: Load the model from the appropriate path/registry",
-            f'# _model_{node.node_id} = PipelineModel.load("{model_ref}")',
-            f"# {out_var} = _model_{node.node_id}.transform(_prepared_{node.node_id})",
-            f"{out_var} = _prepared_{node.node_id}  # passthrough placeholder until model is loaded",
-        ]
-        return NodeCodeResult(
-            code_lines=lines,
-            output_vars={"Output": out_var},
-            imports={
-                "from pyspark.ml.feature import VectorAssembler",
-                "from pyspark.ml import PipelineModel",
-            },
-            warnings=[f"ScoreModelNode (node {node.node_id}): requires manual model loading from '{model_ref}'"],
-        )
-
-    def _generate_BoostedModelNode(self, node: BoostedModelNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        features_repr = repr(node.feature_fields) if node.feature_fields else '["feature1", "feature2"]'
-        model_class = "GBTClassifier" if node.model_type == "classification" else "GBTRegressor"
-        model_import = f"from pyspark.ml.classification import {model_class}" if node.model_type == "classification" else f"from pyspark.ml.regression import {model_class}"
-        lines = [
-            f"# BoostedModel ({node.model_type}): target='{node.target_field}', iterations={node.num_iterations}, lr={node.learning_rate}",
-            f"_assembler_{node.node_id} = VectorAssembler(inputCols={features_repr}, outputCol=\"features_{node.node_id}\")",
-            f'_gbt_{node.node_id} = {model_class}(featuresCol="features_{node.node_id}", labelCol="{node.target_field}", '
-            f"maxIter={node.num_iterations}, maxDepth={node.max_depth}, stepSize={node.learning_rate}, predictionCol=\"{node.output_field}\")",
-            f"_pipeline_{node.node_id} = Pipeline(stages=[_assembler_{node.node_id}, _gbt_{node.node_id}])",
-            f"_model_{node.node_id} = _pipeline_{node.node_id}.fit({inp})",
-            f"{out_var} = _model_{node.node_id}.transform({inp})",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            imports={model_import, "from pyspark.ml.feature import VectorAssembler", "from pyspark.ml import Pipeline"},
-            warnings=[f"BoostedModelNode (node {node.node_id}): verify feature columns and label column types"],
-        )
-
-    def _generate_NaiveBayesNode(self, node: NaiveBayesNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        features_repr = repr(node.feature_fields) if node.feature_fields else '["feature1", "feature2"]'
-        lines = [
-            f"# NaiveBayes: target='{node.target_field}', smoothing={node.smoothing}",
-            f"_assembler_{node.node_id} = VectorAssembler(inputCols={features_repr}, outputCol=\"features_{node.node_id}\")",
-            f'_nb_{node.node_id} = NaiveBayes(featuresCol="features_{node.node_id}", labelCol="{node.target_field}", '
-            f"smoothing={node.smoothing}, predictionCol=\"{node.output_field}\")",
-            f"_pipeline_{node.node_id} = Pipeline(stages=[_assembler_{node.node_id}, _nb_{node.node_id}])",
-            f"_model_{node.node_id} = _pipeline_{node.node_id}.fit({inp})",
-            f"{out_var} = _model_{node.node_id}.transform({inp})",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            imports={"from pyspark.ml.classification import NaiveBayes", "from pyspark.ml.feature import VectorAssembler", "from pyspark.ml import Pipeline"},
-            warnings=[f"NaiveBayesNode (node {node.node_id}): features must be non-negative for multinomial model"],
-        )
-
-    def _generate_SupportVectorMachineNode(self, node: SupportVectorMachineNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        features_repr = repr(node.feature_fields) if node.feature_fields else '["feature1", "feature2"]'
-        lines = [
-            f"# SVM: target='{node.target_field}', regularization={node.regularization}, maxIter={node.max_iterations}",
-            f"_assembler_{node.node_id} = VectorAssembler(inputCols={features_repr}, outputCol=\"features_{node.node_id}\")",
-            f'_svc_{node.node_id} = LinearSVC(featuresCol="features_{node.node_id}", labelCol="{node.target_field}", '
-            f"regParam={node.regularization}, maxIter={node.max_iterations}, predictionCol=\"{node.output_field}\")",
-            f"_pipeline_{node.node_id} = Pipeline(stages=[_assembler_{node.node_id}, _svc_{node.node_id}])",
-            f"_model_{node.node_id} = _pipeline_{node.node_id}.fit({inp})",
-            f"{out_var} = _model_{node.node_id}.transform({inp})",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            imports={"from pyspark.ml.classification import LinearSVC", "from pyspark.ml.feature import VectorAssembler", "from pyspark.ml import Pipeline"},
-            warnings=[f"SVMNode (node {node.node_id}): LinearSVC only supports linear kernel"],
-        )
-
-    def _generate_NeuralNetworkNode(self, node: NeuralNetworkNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        features_repr = repr(node.feature_fields) if node.feature_fields else '["feature1", "feature2"]'
-        layers_repr = repr(node.hidden_layers)
-        lines = [
-            f"# NeuralNetwork: target='{node.target_field}', hidden_layers={layers_repr}, maxIter={node.max_iterations}",
-            f"_assembler_{node.node_id} = VectorAssembler(inputCols={features_repr}, outputCol=\"features_{node.node_id}\")",
-            "# NOTE: layers must be [input_size, ...hidden..., output_size]; adjust manually",
-            f"_layers_{node.node_id} = [len({features_repr})] + {layers_repr} + [2]  # adjust output classes",
-            f'_mlp_{node.node_id} = MultilayerPerceptronClassifier(featuresCol="features_{node.node_id}", labelCol="{node.target_field}", '
-            f"layers=_layers_{node.node_id}, maxIter={node.max_iterations}, predictionCol=\"{node.output_field}\")",
-            f"_pipeline_{node.node_id} = Pipeline(stages=[_assembler_{node.node_id}, _mlp_{node.node_id}])",
-            f"_model_{node.node_id} = _pipeline_{node.node_id}.fit({inp})",
-            f"{out_var} = _model_{node.node_id}.transform({inp})",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            imports={"from pyspark.ml.classification import MultilayerPerceptronClassifier", "from pyspark.ml.feature import VectorAssembler", "from pyspark.ml import Pipeline"},
-            warnings=[f"NeuralNetworkNode (node {node.node_id}): adjust layer sizes (input/output) manually"],
-        )
-
-    def _generate_GammaRegressionNode(self, node: GammaRegressionNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        features_repr = repr(node.feature_fields) if node.feature_fields else '["feature1", "feature2"]'
-        lines = [
-            f"# GammaRegression: target='{node.target_field}', link='{node.link_function}'",
-            f"_assembler_{node.node_id} = VectorAssembler(inputCols={features_repr}, outputCol=\"features_{node.node_id}\")",
-            f'_glm_{node.node_id} = GeneralizedLinearRegression(featuresCol="features_{node.node_id}", labelCol="{node.target_field}", '
-            f'family="gamma", link="{node.link_function}", predictionCol="{node.output_field}")',
-            f"_pipeline_{node.node_id} = Pipeline(stages=[_assembler_{node.node_id}, _glm_{node.node_id}])",
-            f"_model_{node.node_id} = _pipeline_{node.node_id}.fit({inp})",
-            f"{out_var} = _model_{node.node_id}.transform({inp})",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            imports={"from pyspark.ml.regression import GeneralizedLinearRegression", "from pyspark.ml.feature import VectorAssembler", "from pyspark.ml import Pipeline"},
-            warnings=[f"GammaRegressionNode (node {node.node_id}): verify target values are positive"],
-        )
-
-    def _generate_CountRegressionNode(self, node: CountRegressionNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        features_repr = repr(node.feature_fields) if node.feature_fields else '["feature1", "feature2"]'
-        lines = [
-            f"# CountRegression (Poisson): target='{node.target_field}', link='{node.link_function}'",
-            f"_assembler_{node.node_id} = VectorAssembler(inputCols={features_repr}, outputCol=\"features_{node.node_id}\")",
-            f'_glm_{node.node_id} = GeneralizedLinearRegression(featuresCol="features_{node.node_id}", labelCol="{node.target_field}", '
-            f'family="poisson", link="{node.link_function}", predictionCol="{node.output_field}")',
-            f"_pipeline_{node.node_id} = Pipeline(stages=[_assembler_{node.node_id}, _glm_{node.node_id}])",
-            f"_model_{node.node_id} = _pipeline_{node.node_id}.fit({inp})",
-            f"{out_var} = _model_{node.node_id}.transform({inp})",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            imports={"from pyspark.ml.regression import GeneralizedLinearRegression", "from pyspark.ml.feature import VectorAssembler", "from pyspark.ml import Pipeline"},
-            warnings=[f"CountRegressionNode (node {node.node_id}): verify target values are non-negative integers"],
-        )
-
-    def _generate_SplineModelNode(self, node: SplineModelNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        lines = [
-            f"# SplineModel: target='{node.target_field}', max_knots={node.max_knots}",
-            "# TODO: No direct Spark MLlib equivalent for spline regression.",
-            "# Consider using polynomial features or a custom UDF.",
-            f"{out_var} = {inp}  # passthrough placeholder",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            warnings=[f"SplineModelNode (node {node.node_id}): requires manual implementation (no MLlib equivalent)"],
-        )
-
-    def _generate_StepwiseNode(self, node: StepwiseNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        features_repr = repr(node.feature_fields) if node.feature_fields else '["feature1", "feature2"]'
-        lines = [
-            f"# Stepwise feature selection: target='{node.target_field}', direction='{node.direction}'",
-            f"_assembler_{node.node_id} = VectorAssembler(inputCols={features_repr}, outputCol=\"features_{node.node_id}\")",
-            f'_selector_{node.node_id} = ChiSqSelector(featuresCol="features_{node.node_id}", outputCol="selected_features_{node.node_id}", '
-            f'labelCol="{node.target_field}", numTopFeatures=len({features_repr}))',
-            f"_pipeline_{node.node_id} = Pipeline(stages=[_assembler_{node.node_id}, _selector_{node.node_id}])",
-            f"_model_{node.node_id} = _pipeline_{node.node_id}.fit({inp})",
-            f"{out_var} = _model_{node.node_id}.transform({inp})",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            imports={"from pyspark.ml.feature import ChiSqSelector, VectorAssembler", "from pyspark.ml import Pipeline"},
-            warnings=[f"StepwiseNode (node {node.node_id}): ChiSqSelector approximates stepwise; direction='{node.direction}' not directly supported"],
-        )
-
-    def _generate_KCentroidsNode(self, node: KCentroidsNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        features_repr = repr(node.feature_fields) if node.feature_fields else '["feature1", "feature2"]'
-        lines = [
-            f"# KMeans clustering: k={node.k}, max_iterations={node.max_iterations}",
-            f"_assembler_{node.node_id} = VectorAssembler(inputCols={features_repr}, outputCol=\"features_{node.node_id}\")",
-            f'_kmeans_{node.node_id} = KMeans(featuresCol="features_{node.node_id}", k={node.k}, '
-            f"maxIter={node.max_iterations}, predictionCol=\"{node.output_field}\")",
-            f"_pipeline_{node.node_id} = Pipeline(stages=[_assembler_{node.node_id}, _kmeans_{node.node_id}])",
-            f"_model_{node.node_id} = _pipeline_{node.node_id}.fit({inp})",
-            f"{out_var} = _model_{node.node_id}.transform({inp})",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            imports={"from pyspark.ml.clustering import KMeans", "from pyspark.ml.feature import VectorAssembler", "from pyspark.ml import Pipeline"},
-            warnings=[f"KCentroidsNode (node {node.node_id}): verify k={node.k} is appropriate for your dataset"],
-        )
-
-    def _generate_PrincipalComponentsNode(self, node: PrincipalComponentsNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        features_repr = repr(node.feature_fields) if node.feature_fields else '["feature1", "feature2"]'
-        lines = [
-            f"# PCA: num_components={node.num_components}",
-            f"_assembler_{node.node_id} = VectorAssembler(inputCols={features_repr}, outputCol=\"features_{node.node_id}\")",
-            f'_pca_{node.node_id} = PCA(inputCol="features_{node.node_id}", outputCol="{node.output_field}", k={node.num_components})',
-            f"_pipeline_{node.node_id} = Pipeline(stages=[_assembler_{node.node_id}, _pca_{node.node_id}])",
-            f"_model_{node.node_id} = _pipeline_{node.node_id}.fit({inp})",
-            f"{out_var} = _model_{node.node_id}.transform({inp})",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            imports={"from pyspark.ml.feature import PCA, VectorAssembler", "from pyspark.ml import Pipeline"},
-            warnings=[f"PCANode (node {node.node_id}): verify num_components={node.num_components} is appropriate"],
-        )
-
-    def _generate_CrossValidationNode(self, node: CrossValidationNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        model_ref = node.model_reference or "UNKNOWN_MODEL"
-        lines = [
-            f"# CrossValidation: num_folds={node.num_folds}, model='{model_ref}'",
-            "# TODO: Configure CrossValidator with appropriate estimator and evaluator",
-            f"# _cv_{node.node_id} = CrossValidator(estimator=..., evaluator=..., numFolds={node.num_folds})",
-            f"# _cv_model_{node.node_id} = _cv_{node.node_id}.fit({inp})",
-            f"{out_var} = {inp}  # passthrough placeholder until CrossValidator is configured",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            imports={"from pyspark.ml.tuning import CrossValidator"},
-            warnings=[f"CrossValidationNode (node {node.node_id}): requires manual estimator/evaluator configuration"],
-        )
-
-    def _generate_ARIMANode(self, node: ARIMANode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        lines = [
-            f"# ARIMA({node.p},{node.d},{node.q}): time='{node.time_field}', value='{node.value_field}'",
-            "# TODO: No direct Spark MLlib equivalent for ARIMA.",
-            "# Consider using Prophet or pandas UDF with statsmodels.",
-            "# Example with pandas UDF:",
-            '# @F.pandas_udf("double")',
-            "# def arima_forecast(ts: pd.Series) -> pd.Series:",
-            "#     from statsmodels.tsa.arima.model import ARIMA",
-            f"#     model = ARIMA(ts, order=({node.p}, {node.d}, {node.q}))",
-            "#     return pd.Series(model.fit().predict())",
-            f"{out_var} = {inp}  # passthrough placeholder",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            warnings=[f"ARIMANode (node {node.node_id}): requires manual implementation with Prophet or statsmodels"],
-        )
-
-    def _generate_ETSNode(self, node: ETSNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        lines = [
-            f"# ETS: time='{node.time_field}', value='{node.value_field}', "
-            f"error={node.error_type}, trend={node.trend_type}, seasonal={node.seasonal_type}",
-            "# TODO: No direct Spark MLlib equivalent for ETS.",
-            "# Consider using Prophet or pandas UDF with statsmodels.",
-            f"{out_var} = {inp}  # passthrough placeholder",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            warnings=[f"ETSNode (node {node.node_id}): requires manual implementation with Prophet or statsmodels"],
-        )
-
-    def _generate_AppendClusterNode(self, node: AppendClusterNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        feats = ", ".join(f'"{f}"' for f in node.feature_fields)
-        lines = [
-            "# AppendCluster: apply pre-trained clustering model",
-            "from pyspark.ml.feature import VectorAssembler",
-            f"_assembler_{node.node_id} = VectorAssembler(inputCols=[{feats}], outputCol='features')",
-            f"_assembled_{node.node_id} = _assembler_{node.node_id}.transform({inp})",
-            f"# TODO: Load pre-trained KMeans model (model_reference='{node.model_reference}')",
-            "# model = KMeansModel.load('...')",
-            f"# {out_var} = model.transform(_assembled_{node.node_id})",
-            f"{out_var} = _assembled_{node.node_id}  # passthrough until model loaded",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            imports={"from pyspark.ml.feature import VectorAssembler"},
-            warnings=[f"AppendClusterNode (node {node.node_id}): requires loading pre-trained model"],
-        )
-
-    def _generate_FindNearestNeighborsNode(self, node: FindNearestNeighborsNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        feats = ", ".join(f'"{f}"' for f in node.feature_fields)
-        lines = [
-            f"# FindNearestNeighbors: k={node.k}, metric='{node.distance_metric}'",
-            "from pyspark.ml.feature import VectorAssembler, BucketedRandomProjectionLSH",
-            f"_assembler_{node.node_id} = VectorAssembler(inputCols=[{feats}], outputCol='features')",
-            f"_assembled_{node.node_id} = _assembler_{node.node_id}.transform({inp})",
-            f"_lsh_{node.node_id} = BucketedRandomProjectionLSH(inputCol='features', outputCol='hashes', bucketLength=2.0)",
-            f"_lsh_model_{node.node_id} = _lsh_{node.node_id}.fit(_assembled_{node.node_id})",
-            f"{out_var} = _assembled_{node.node_id}  # TODO: use approxSimilarityJoin for neighbor search",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            imports={"from pyspark.ml.feature import VectorAssembler, BucketedRandomProjectionLSH"},
-            warnings=[f"FindNearestNeighborsNode (node {node.node_id}): approximate NN via LSH"],
-        )
-
-    def _generate_KCentroidsDiagnosticsNode(self, node: KCentroidsDiagnosticsNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        feats = ", ".join(f'"{f}"' for f in node.feature_fields)
-        lines = [
-            "# KCentroidsDiagnostics: silhouette score and cluster evaluation",
-            "from pyspark.ml.evaluation import ClusteringEvaluator",
-            "# TODO: Ensure 'prediction' and 'features' columns exist from upstream KMeans",
-            f"_evaluator_{node.node_id} = ClusteringEvaluator()",
-            f"# silhouette = _evaluator_{node.node_id}.evaluate({inp})",
-            f"{out_var} = {inp}  # passthrough - diagnostics computed above",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            imports={"from pyspark.ml.evaluation import ClusteringEvaluator"},
-            warnings=[f"KCentroidsDiagnosticsNode (node {node.node_id}): ensure upstream KMeans output has prediction column"],
-        )
-
-    def _generate_LiftChartNode(self, node: LiftChartNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        lines = [
-            f"# LiftChart: prediction='{node.prediction_field}', actual='{node.actual_field}'",
-            "from pyspark.sql import functions as F, Window as W",
-            f"_decile_{node.node_id} = F.ntile(10).over(W.orderBy(F.col('{node.prediction_field}').desc()))",
-            f"{out_var} = {inp}.withColumn('decile', _decile_{node.node_id})",
-            "# TODO: Group by decile and compute cumulative gain/lift",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            warnings=[f"LiftChartNode (node {node.node_id}): lift/gain computation may need refinement"],
-        )
-
-    def _generate_ModelComparisonNode(self, node: ModelComparisonNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        refs = ", ".join(f"'{r}'" for r in node.model_references)
-        lines = [
-            f"# ModelComparison: models=[{refs}]",
-            "# TODO: Load models from MLflow and compare metrics",
-            "# Use mlflow.search_runs() to compare across experiments",
-            f"{out_var} = {inp}  # passthrough placeholder",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            warnings=[f"ModelComparisonNode (node {node.node_id}): use MLflow for model comparison"],
-        )
-
-    def _generate_ModelCoefficientsNode(self, node: ModelCoefficientsNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        lines = [
-            f"# ModelCoefficients: extract from model_reference='{node.model_reference}'",
-            "# TODO: Load fitted model and access .coefficients / .intercept",
-            "# coeffs = model.coefficients.toArray()",
-            f"{out_var} = {inp}  # passthrough placeholder",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            warnings=[f"ModelCoefficientsNode (node {node.node_id}): load model to extract coefficients"],
-        )
-
-    def _generate_TSForecastNode(self, node: TSForecastNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        lines = [
-            f"# TSForecast: time='{node.time_field}', value='{node.value_field}', forecast='{node.forecast_field}'",
-            "# TODO: Use Prophet or pandas UDF for time series forecasting",
-            f"{out_var} = {inp}  # passthrough placeholder",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            warnings=[f"TSForecastNode (node {node.node_id}): use Prophet or pandas UDF for forecasting"],
-        )
-
-    def _generate_MeansTestNode(self, node: MeansTestNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        lines = [
-            f"# TestOfMeans: field_a='{node.field_a}', field_b='{node.field_b}', test='{node.test_type}'",
-            "# TODO: Use pandas UDF with scipy.stats.ttest_ind / ttest_rel",
-            "# from scipy.stats import ttest_ind",
-            f"{out_var} = {inp}  # passthrough placeholder",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            warnings=[f"MeansTestNode (node {node.node_id}): use pandas UDF with scipy.stats"],
-        )
-
-    def _generate_VarianceInflationFactorsNode(self, node: VarianceInflationFactorsNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        feats = ", ".join(f'"{f}"' for f in node.feature_fields)
-        lines = [
-            f"# VIF: features=[{feats}]",
-            "# TODO: Use pandas UDF with statsmodels.stats.outliers_influence.variance_inflation_factor",
-            f"{out_var} = {inp}  # passthrough placeholder",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            warnings=[f"VarianceInflationFactorsNode (node {node.node_id}): use pandas UDF with statsmodels"],
-        )
-
-    def _generate_ABAnalysisNode(self, node: ABAnalysisNode, input_vars: dict[str, str]) -> NodeCodeResult:
-        inp = self._get_single_input(input_vars)
-        out_var = f"df_{node.node_id}"
-        lines = [
-            f"# ABAnalysis: treatment='{node.treatment_field}', response='{node.response_field}'",
-            "# TODO: Use pandas UDF with scipy.stats for A/B test analysis",
-            f"{out_var} = {inp}  # passthrough placeholder",
-        ]
-        return NodeCodeResult(
-            code_lines=lines, output_vars={"Output": out_var},
-            warnings=[f"ABAnalysisNode (node {node.node_id}): use pandas UDF with scipy.stats"],
+            warnings=[f"{tool} (node {node.node_id}): requires manual conversion to Spark MLlib"],
         )
 
     # -- Special nodes ------------------------------------------------------
@@ -2322,7 +2001,7 @@ class PySparkGenerator(CodeGenerator):
 
         if node.rename_mode == "FirstRow":
             lines = [
-                f"# DynamicRename (FirstRow): use first row values as new column names",
+                "# DynamicRename (FirstRow): use first row values as new column names",
                 f"_first_row_{node.node_id} = {inp}.first()",
                 f"{out_var} = {inp}.toDF(*[str(v) for v in _first_row_{node.node_id}])",
                 f"{out_var} = {out_var}.subtract({inp}.limit(1))  # remove the header row",
@@ -2337,7 +2016,7 @@ class PySparkGenerator(CodeGenerator):
             code_lines=lines,
             output_vars={"Output": out_var},
             warnings=(
-                [f"DynamicRename mode '{node.rename_mode}' requires manual review (node {node.node_id})"]
+                [f"DynamicRename node {node.node_id} ({node.rename_mode} mode): manual PySpark rewrite needed"]
                 if node.rename_mode != "FirstRow"
                 else []
             ),
@@ -2357,19 +2036,23 @@ class PySparkGenerator(CodeGenerator):
             lines.append(
                 f"_files_{node.node_id} = [f for f in _files_{node.node_id} if f.name.endswith('{pattern.lstrip('*')}')]"
             )
-        lines.extend([
-            f"{out_var} = spark.createDataFrame(",
-            f"    [(f.path, f.name, f.size) for f in _files_{node.node_id}],",
-            '    ["FullPath", "FileName", "FileSize"]',
-            ")",
-        ])
+        lines.extend(
+            [
+                f"{out_var} = spark.createDataFrame(",
+                f"    [(f.path, f.name, f.size) for f in _files_{node.node_id}],",
+                '    ["FullPath", "FileName", "FileSize"]',
+                ")",
+            ]
+        )
         return NodeCodeResult(
             code_lines=lines,
             output_vars={"Output": out_var},
             warnings=[],
         )
 
-    def _unsupported_passthrough(self, node: IRNode, input_vars: dict[str, str], label: str | None = None) -> NodeCodeResult:
+    def _unsupported_passthrough(
+        self, node: IRNode, input_vars: dict[str, str], label: str | None = None
+    ) -> NodeCodeResult:
         """Emit a concise passthrough for unsupported node types.
 
         Instead of emitting a redundant ``df_N = df_M`` identity assignment,
@@ -2391,7 +2074,7 @@ class PySparkGenerator(CodeGenerator):
 
         return NodeCodeResult(
             code_lines=lines,
-            output_vars={"Output": inp},   # reuse input var — no identity assignment
+            output_vars={"Output": inp},  # reuse input var — no identity assignment
             warnings=[f"Unsupported node {node.node_id} ({tool}): {reason}"],
         )
 

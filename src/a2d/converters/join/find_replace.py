@@ -34,7 +34,6 @@ class FindReplaceConverter(ToolConverter):
         find_mode = mode_map.get(raw_mode, "exact")
 
         case_sensitive = safe_get(cfg, "CaseSensitive", default="True").lower() != "false"
-        append_unused = safe_get(cfg, "AppendUnused", default="False").lower() == "true"
 
         return FindReplaceNode(
             node_id=parsed_node.tool_id,
@@ -46,6 +45,5 @@ class FindReplaceConverter(ToolConverter):
             replace_field=replace_field,
             find_mode=find_mode,
             case_sensitive=case_sensitive,
-            append_unused=append_unused,
             conversion_notes=["FindReplace maps to a PySpark join + replace pattern."],
         )

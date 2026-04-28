@@ -20,16 +20,12 @@ class RecordIDConverter(ToolConverter):
     def convert(self, parsed_node: ParsedNode, config: ConversionConfig) -> IRNode:
         cfg = parsed_node.configuration
 
-        output_field = safe_get(cfg, "FieldName", default="RecordID")
-        if not output_field:
-            output_field = "RecordID"
+        output_field = safe_get(cfg, "FieldName", default="RecordID") or "RecordID"
 
         starting_str = safe_get(cfg, "StartValue", default="1")
         starting_value = int(starting_str) if starting_str.isdigit() else 1
 
-        output_type = safe_get(cfg, "FieldType", default="Int64")
-        if not output_type:
-            output_type = "Int64"
+        output_type = safe_get(cfg, "FieldType", default="Int64") or "Int64"
 
         return RecordIDNode(
             node_id=parsed_node.tool_id,

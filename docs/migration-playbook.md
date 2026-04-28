@@ -36,7 +36,7 @@ The `a2d` tool accelerates the Conversion phase by automating 60-80% of the mech
 | Migration Lead | Overall coordination, stakeholder communication, wave planning |
 | Data Engineer | Run conversions, review generated code, handle manual items |
 | Alteryx SME | Explain business logic, validate correctness, identify edge cases |
-| Databricks Admin | Set up workspaces, clusters, Unity Catalog, Workflows |
+| Databricks Admin | Set up workspaces, clusters, Unity Catalog, Lakeflow Jobs |
 | QA Engineer | Design validation tests, compare output datasets |
 
 ---
@@ -68,12 +68,16 @@ migration_assessment/
 ### Step 1.2: Run Batch Analysis
 
 ```bash
+# Standard analysis
 a2d analyze migration_assessment/ -o assessment_report/ --format both
+
+# With complexity breakdown
+a2d analyze migration_assessment/ -o assessment_report/ --format both --complexity
 ```
 
 This produces:
-- `assessment_report/migration_report.html` -- visual dashboard
-- `assessment_report/migration_report.json` -- machine-readable data
+- `assessment_report/migration_report.html` -- visual dashboard with confidence scores and enriched warnings
+- `assessment_report/migration_report.json` -- machine-readable data with per-workflow metrics
 
 ### Step 1.3: Review the Report
 
@@ -81,14 +85,25 @@ The report includes for each workflow:
 
 | Metric | What It Tells You |
 |--------|-------------------|
-| **Complexity Score** (0-100) | How hard the workflow is to migrate (weighted by node count, expressions, unsupported tools, macros, DAG depth) |
+| **Complexity Score** (0-100) | How hard the workflow is to migrate (7 weighted dimensions: nodes, diversity, expressions, unsupported ratio, macros, DAG depth, spatial tools) |
 | **Complexity Level** | Low / Medium / High / Very High |
 | **Coverage %** | Percentage of tool types that have automated converters |
 | **Unsupported Tools** | List of tools that need manual conversion |
 | **Expression Count** | Number of formula/filter expressions (proxy for business logic density) |
 | **Macro References** | External macros that need separate treatment |
 
-### Step 1.4: Identify Blockers
+### Step 1.4: Effort Estimation (Optional)
+
+For large estates (50+ workflows), use batch analysis with complexity breakdowns for effort estimation and wave grouping:
+
+```bash
+# Analyze entire estate with per-workflow complexity breakdown
+a2d analyze migration_assessment/ -o portfolio_report/ --format both --complexity
+```
+
+Use the complexity scores and coverage percentages from the report to group workflows into migration phases (Quick Wins, Core Business, Complex, Manual) and estimate effort per workflow (Low=2h, Medium=8h, High=16h, Very High=40h).
+
+### Step 1.5: Identify Blockers
 
 Flag workflows that contain:
 - **Spatial tools**: Need geospatial library (Sedona, H3) or alternative architecture
@@ -97,7 +112,7 @@ Flag workflows that contain:
 - **In-database tools**: Need connection mapping and potentially different patterns
 - **Reporting tools**: Need Databricks dashboards or alternative reporting
 
-### Step 1.5: Estimate Effort
+### Step 1.6: Estimate Effort
 
 Use this rough sizing model:
 
@@ -143,12 +158,12 @@ Create a prioritization spreadsheet:
 
 ### Step 2.3: Dependency Mapping
 
-Identify workflows that share:
+Manually identify workflows that share:
 - Common data sources (same database connections, file paths)
 - Macro libraries (shared `.yxmc` files)
 - Chained scheduling (output of one is input of another)
 
-Group dependent workflows into the same wave.
+Review the analysis report's macro references and connection details to find overlaps. Use a spreadsheet or Jira board to track cross-workflow dependencies. Group dependent workflows into the same wave.
 
 ---
 
@@ -158,24 +173,43 @@ Group dependent workflows into the same wave.
 
 ### Step 3.1: Run the Converter
 
-For each workflow or wave:
+`a2d convert` emits all four formats by default (PySpark, Spark Declarative Pipelines a.k.a. DLT, SQL, Lakeflow Designer) into per-format subdirectories of `--output-dir`. Use `-f` to restrict to a subset.
 
 ```bash
-# Single workflow
+# Single workflow — produces output/finance/{pyspark,dlt,sql,lakeflow}/
+a2d convert finance/monthly_close.yxmd -o output/finance/
+
+# Restrict to one or more formats
 a2d convert finance/monthly_close.yxmd -o output/finance/ -f pyspark
+a2d convert finance/monthly_close.yxmd -o output/finance/ -f pyspark,sql
 
-# Entire wave directory
-a2d convert wave1/ -o output/wave1/ -f pyspark
+# With Unity Catalog + connection mapping (still all 4 formats unless filtered)
+a2d convert wave1/ -o output/wave1/ \
+  --catalog prod_catalog --schema finance \
+  --connection-map connections.yml
 
-# With Unity Catalog settings
-a2d convert wave1/ -o output/wave1/ -f pyspark --catalog prod_catalog --schema finance
+# Target a specific cloud for the auto-generated node_type_id in Workflow JSON / DAB
+# (default: aws → i3.xlarge; azure → Standard_DS3_v2; gcp → n1-highmem-4)
+a2d convert wave1/ -o output/wave1/ --cloud azure
+
+# With all observability features
+a2d convert wave1/ -o output/wave1/ \
+  --expression-audit \
+  --performance-hints \
+  --generate-ddl \
+  --generate-dab
 ```
 
 ### Step 3.2: Review Generated Code
 
-The converter produces:
-- `{workflow_name}.py` -- PySpark notebook (or `_dlt.py` / `.sql`)
-- `{workflow_name}_workflow.json` -- Databricks Workflow definition
+The converter produces (depending on format):
+- `{workflow_name}.py` -- PySpark notebook, `_dlt.py`, or `.sql` script
+- `{workflow_name}_workflow.json` -- Databricks Workflow definition (strict JSON, no `//` headers)
+- `{workflow_name}_workflow.README.md` -- operator notes for fields a2d intentionally omits (e.g. `run_as`, `webhook_notifications`)
+- `{workflow_name}_lakeflow_pipeline.json` -- Lakeflow pipeline config (if `-f lakeflow`)
+- `{workflow_name}_ddl.sql` -- Unity Catalog DDL (if `--generate-ddl`); non-Delta external tables emit `CREATE TABLE ... AS SELECT * FROM read_files(...)` so the result is a Delta-managed table over the foreign format
+- `{workflow_name}_dab/` -- Databricks Asset Bundle project (if `--generate-dab`)
+- `expression_audit.csv` -- Expression translation audit (if `--expression-audit`)
 
 Review each generated file for:
 
@@ -183,6 +217,18 @@ Review each generated file for:
 2. **Warnings**: Printed during conversion and embedded as comments
 3. **Connection mappings**: Replace Alteryx file paths/ODBC connections with Databricks-native sources
 4. **Expression accuracy**: Verify translated formulas match business intent
+
+The CLI also prints (mirroring the web UI's Convert page):
+
+- A **deploy-readiness banner**: `Ready to deploy` (clean) / `Needs review` (warnings non-blocking) / `Cannot deploy as-is` (blockers present)
+- A **counts row**: coverage %, confidence /100, tools converted, nodes needing review, blocker count
+- Warnings **grouped by category** rather than dumped flat:
+  - `Cannot convert` — unsupported tools, missing generators (blockers)
+  - `Manual review needed` — expression fallbacks, local paths, dynamic-rename caveats, joins missing keys
+  - `Graph structure note` — disconnected components, etc.
+  - `Other` — anything that didn't match the 7 known templates
+
+The same status logic powers the API response — `response.deploy_status` and the per-format `categorized_warnings` field — so the CLI and UI agree.
 
 ### Step 3.3: Handle Manual Items
 
@@ -304,11 +350,11 @@ Options for deploying generated code:
 The generated `_workflow.json` can be imported via:
 
 ```bash
-# Using Databricks CLI
-databricks jobs create --json-file output/monthly_close_workflow.json
+# Using Databricks CLI (v0.205+, unified CLI)
+databricks jobs create --json @output/monthly_close_workflow.json
 
-# Or via REST API
-curl -X POST "https://<workspace>/api/2.1/jobs/create" \
+# Or via REST API (Jobs 2.2)
+curl -X POST "https://<workspace>/api/2.2/jobs/create" \
   -H "Authorization: Bearer <token>" \
   -d @output/monthly_close_workflow.json
 ```
@@ -318,23 +364,44 @@ Review and adjust:
 - **Schedule**: Set the cron schedule to match the original Alteryx Server schedule
 - **Notifications**: Configure email/Slack alerts for failures
 
-### Step 5.4: DLT Pipeline Setup (if using DLT format)
+### Step 5.4: Spark Declarative Pipelines / Lakeflow Pipeline Setup
 
-For DLT-formatted output:
-1. Create a new DLT pipeline in the Databricks UI
+**For Spark Declarative Pipelines format** (`-f dlt`, file `_dlt.py`):
+1. Create a new Lakeflow pipeline in the Databricks UI (Workflows → Pipelines)
 2. Point it to the generated `_dlt.py` notebook
-3. Configure target schema and storage location
+3. Configure target catalog and schema
 4. Set pipeline mode (Triggered or Continuous)
 5. Add data quality expectations if needed
 
-### Step 5.5: Parallel Run
+> Generated code uses `import dlt` and `@dlt.table` — these still run on
+> current DBR. For new pipelines, Databricks recommends the
+> `from pyspark import pipelines as dp` API; the generated code remains
+> compatible until `pyspark.pipelines` is GA on all supported DBR LTS releases.
+
+**For Lakeflow format** (`-f lakeflow`):
+1. Import the `_lakeflow_pipeline.json` via the Databricks REST API or CLI
+2. The pipeline config includes catalog, target schema, and cluster settings
+3. Each file source becomes a `STREAMING TABLE`; each transformation becomes a `MATERIALIZED VIEW`
+4. Upstream references use the `LIVE.` prefix (legacy publishing mode). In
+   default publishing mode (mandatory for new pipelines created via the UI
+   since 2025-02-05), `LIVE.` is silently ignored and table refs resolve
+   against the pipeline catalog/schema — the generated SQL works in both
+   modes.
+
+### Step 5.5: Track Progress
+
+Use a spreadsheet, Jira board, or other project management tool to maintain per-workflow migration status.
+
+Recommended status lifecycle: `not_started` -> `in_progress` -> `converted` -> `validated` -> `deployed`.
+
+### Step 5.6: Parallel Run
 
 Run the Databricks workflow in parallel with the original Alteryx workflow for 1-2 cycles:
 - Compare outputs after each run
 - Monitor for performance differences
 - Verify scheduling works correctly
 
-### Step 5.6: Cutover
+### Step 5.7: Cutover
 
 Once parallel runs are validated:
 1. Disable the Alteryx Server schedule
@@ -348,7 +415,7 @@ Once parallel runs are validated:
 
 ### Connection Mapping
 
-Create a centralized connection mapping configuration and apply it across all workflows. Consider creating a YAML or JSON mapping file:
+Use `a2d`'s built-in connection mapping feature to apply centralized mappings across all workflows. Create a YAML file (see `examples/connection_mapping.yml`):
 
 ```yaml
 connections:
@@ -362,6 +429,14 @@ connections:
     type: "volume"
     target: "/Volumes/prod_catalog/local_uploads/"
 ```
+
+Apply during conversion:
+
+```bash
+a2d convert wave1/ -o output/ --connection-map connections.yml
+```
+
+The Web UI also includes a visual connection mapping editor under Settings.
 
 ### Handling Macros
 
@@ -380,7 +455,7 @@ Spatial tools (Buffer, SpatialMatch, Distance, etc.) have no direct Spark equiva
 
 1. **Apache Sedona**: Full geospatial support for Spark (`pip install apache-sedona`)
 2. **H3**: Uber's hierarchical geospatial indexing (good for proximity/aggregation)
-3. **Mosaic**: Databricks Labs geospatial library
+3. **Mosaic**: Databricks Labs geospatial project (community-supported)
 4. **PostGIS**: Run spatial operations in a database and read results into Spark
 
 ### Handling Large Workflows
@@ -388,7 +463,7 @@ Spatial tools (Buffer, SpatialMatch, Distance, etc.) have no direct Spark equiva
 For workflows with 50+ tools:
 
 1. Consider breaking into smaller, modular notebooks
-2. Use the DLT format for built-in dependency management
+2. Use the Spark Declarative Pipelines format for built-in dependency management
 3. Use the Workflow JSON to create multi-task jobs
 
 ### Expression Debugging
@@ -418,8 +493,8 @@ Alteryx workflows can have multiple Output tools. The generated code produces se
 ### Workflows Using Alteryx Gallery/Server APIs
 
 Replace Gallery API calls with Databricks REST API equivalents:
-- **Schedule triggers** -> Databricks Workflow triggers
-- **API endpoints** -> Databricks SQL endpoints or REST API
+- **Schedule triggers** -> Lakeflow Jobs triggers
+- **API endpoints** -> Databricks SQL Warehouse or REST API
 - **Shared credentials** -> Databricks secret scopes
 
 ### Workflows with Email Output

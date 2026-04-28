@@ -37,7 +37,7 @@ export function ValidatePage() {
     <div className="space-y-6">
       <PageHeader
         title="Validate Code"
-        description="Check generated Python/PySpark code for syntax errors before deploying to Databricks"
+        description="Check syntax of converted workflows"
       >
         {result && (
           <Button variant="ghost" size="sm" onClick={handleClear}>
@@ -84,7 +84,7 @@ export function ValidatePage() {
         </div>
       )}
 
-      {/* Results */}
+      {/* Validation results */}
       {result && (
         <Card>
           <div className="flex items-center gap-3 mb-4">
@@ -137,7 +137,7 @@ export function ValidatePage() {
         <Card className="bg-[var(--bg-sidebar)]">
           <h3 className="text-sm font-semibold text-[var(--fg)] mb-2">Tips</h3>
           <ul className="text-xs text-[var(--fg-muted)] space-y-1 list-disc list-inside">
-            <li>Paste the generated PySpark or DLT code from the Convert page</li>
+            <li>Paste the generated PySpark or Spark Declarative Pipelines code from the Convert page</li>
             <li>Databricks notebook magic commands (%sql, %pip) are automatically handled</li>
             <li>SQL validation is not yet supported — only Python syntax is checked</li>
             <li>For full data validation, run the generated code against sample data in Databricks</li>

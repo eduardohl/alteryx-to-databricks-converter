@@ -18,10 +18,11 @@ _ALTERYX_FMT_MAP = [
     ("%j", "DDD"),
     ("%A", "EEEE"),
     ("%a", "EEE"),
+    ("%f", "SSSSSS"),
 ]
 
 # Only convert if the string contains at least one strftime token
-_ALTERYX_FMT_RE = re.compile(r"%[YymbBdHIMSpjAa]")
+_ALTERYX_FMT_RE = re.compile(r"%[YymbBdHIMSpjAaf]")
 
 
 # SQL normalization patterns for converting source-DB SQL to Spark SQL

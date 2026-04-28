@@ -68,7 +68,9 @@ def analyze_files(files: list[tuple[str, bytes]]) -> dict:
 
     logger.info(
         "Analysis complete: %d workflows, %d total nodes, %.1f%% avg coverage",
-        total, total_nodes, avg_coverage,
+        total,
+        total_nodes,
+        avg_coverage,
     )
 
     return {

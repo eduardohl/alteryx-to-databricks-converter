@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { PageHeader } from "@/components/layout/page-header";
 import { FileDropzone } from "@/components/shared/file-dropzone";
 import { MetricCard } from "@/components/shared/metric-card";
 import { WorkflowTable } from "@/components/analyze/workflow-table";
-import { CoverageChart } from "@/components/analyze/coverage-chart";
+import { AnalysisSummary } from "@/components/analyze/analysis-summary";
 import { ToolFrequency } from "@/components/analyze/tool-frequency";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,10 +12,12 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAnalysis } from "@/hooks/use-analysis";
 import { useAnalysisStore } from "@/stores/analysis";
+import { useConvertBridge } from "@/stores/convert-bridge";
 import { downloadAnalysisCSV } from "@/lib/csv";
 import { motion } from "motion/react";
 import type { AnalysisResult } from "@/lib/api";
 import {
+  ArrowRight,
   BarChart3,
   Loader2,
   FileText,
@@ -30,14 +33,18 @@ export function AnalyzePage() {
   const [files, setFiles] = useState<File[]>([]);
   const [restoredData, setRestoredData] = useState<AnalysisResult | null>(null);
   const mutation = useAnalysis();
-  const analysisStore = useAnalysisStore();
+  const lastResult = useAnalysisStore((s) => s.lastResult);
+  const lastAnalyzedAt = useAnalysisStore((s) => s.lastAnalyzedAt);
+  const saveAnalysis = useAnalysisStore((s) => s.save);
+  const setBridgeWorkflow = useConvertBridge((s) => s.setWorkflowName);
+  const navigate = useNavigate();
 
-  // Persist successful analysis results
+  // Persist successful analysis results. saveAnalysis is a stable Zustand action.
   useEffect(() => {
     if (mutation.data) {
-      analysisStore.save(mutation.data);
+      saveAnalysis(mutation.data);
     }
-  }, [mutation.data]);
+  }, [mutation.data, saveAnalysis]);
 
   // Fresh result takes priority, then restored from storage
   const displayData: AnalysisResult | null = mutation.data ?? restoredData;
@@ -96,17 +103,17 @@ export function AnalyzePage() {
             </Button>
 
             {/* Restore previous analysis */}
-            {analysisStore.lastResult && !mutation.isPending && (
+            {lastResult && !mutation.isPending && (
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setRestoredData(analysisStore.lastResult)}
+                onClick={() => setRestoredData(lastResult)}
               >
                 <History className="h-4 w-4" />
                 Load Previous Analysis
-                {analysisStore.lastAnalyzedAt && (
+                {lastAnalyzedAt && (
                   <span className="text-[var(--fg-muted)] ml-1">
-                    ({new Date(analysisStore.lastAnalyzedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })})
+                    ({new Date(lastAnalyzedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })})
                   </span>
                 )}
               </Button>
@@ -149,6 +156,9 @@ export function AnalyzePage() {
           animate={{ opacity: 1 }}
           className="space-y-6"
         >
+          {/* Plain-English summary */}
+          <AnalysisSummary data={displayData} />
+
           {/* Summary */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <MetricCard
@@ -161,9 +171,12 @@ export function AnalyzePage() {
               value={displayData.total_nodes}
               icon={<Network className="h-5 w-5" />}
             />
-            <div className="flex items-center justify-center">
-              <CoverageChart coverage={displayData.avg_coverage} />
-            </div>
+            <MetricCard
+              label="Avg Coverage"
+              value={displayData.avg_coverage}
+              suffix="%"
+              icon={<BarChart3 className="h-5 w-5" />}
+            />
             <MetricCard
               label="Avg Complexity"
               value={displayData.avg_complexity}
@@ -209,6 +222,18 @@ export function AnalyzePage() {
               <li>Review unsupported tools and plan manual migration approach</li>
               <li>Use the Convert page to generate Databricks code for each workflow</li>
             </ul>
+            <Button
+              size="sm"
+              className="mt-3"
+              onClick={() => {
+                if (displayData?.workflows?.[0]) {
+                  setBridgeWorkflow(displayData.workflows[0].workflow_name);
+                }
+                navigate({ to: "/convert" });
+              }}
+            >
+              Go to Convert <ArrowRight className="h-4 w-4 ml-1" />
+            </Button>
           </Card>
         </motion.div>
       )}

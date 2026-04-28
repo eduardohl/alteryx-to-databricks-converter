@@ -49,7 +49,6 @@ class TestJoinConverter:
         assert isinstance(result, JoinNode)
         assert len(result.join_keys) == 2
 
-
     def test_join_old_xml_format(self):
         """Old XML format uses list of JoinInfo elements with @connection and @field."""
         node = make_node(

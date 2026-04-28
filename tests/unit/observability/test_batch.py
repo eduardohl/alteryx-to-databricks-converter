@@ -253,3 +253,66 @@ class TestBatchOrchestrator:
             if not fr.success:
                 assert len(fr.errors) > 0
                 assert all(isinstance(e, ConversionError) for e in fr.errors)
+
+
+class TestBatchOrchestratorMultiFormat:
+    """Tests for the multi-format batch path (parses each file once,
+    runs all 4 generators in a single pass)."""
+
+    def test_convert_batch_multi_format_with_fixtures(self):
+        """Real fixtures: every file should produce all 4 format outcomes."""
+        if not FIXTURES_DIR.exists():
+            return
+        fixture_files = sorted(FIXTURES_DIR.glob("*.yxmd"))
+        if not fixture_files:
+            return
+
+        config = _make_config()
+        orchestrator = BatchOrchestrator(config)
+        result = orchestrator.convert_batch_multi_format(fixture_files)
+
+        assert result.batch_metrics.total_files == len(fixture_files)
+        for fr in result.file_results:
+            # Either parse_error (None) + multi_result, or parse_error + None
+            if fr.parse_error is None:
+                assert fr.multi_result is not None
+                assert set(fr.multi_result.formats.keys()) == {"pyspark", "dlt", "sql", "lakeflow"}
+            else:
+                assert fr.multi_result is None
+
+    def test_per_format_success_counts(self):
+        """Per-format counts should never exceed total file count."""
+        if not FIXTURES_DIR.exists():
+            return
+        fixture_files = sorted(FIXTURES_DIR.glob("*.yxmd"))
+        if not fixture_files:
+            return
+
+        config = _make_config()
+        orchestrator = BatchOrchestrator(config)
+        result = orchestrator.convert_batch_multi_format(fixture_files)
+        counts = result.per_format_success_counts()
+        for fmt, count in counts.items():
+            assert 0 <= count <= len(fixture_files), fmt
+
+    def test_progress_callback_multi(self):
+        """Progress callback fires once per file."""
+        if not FIXTURES_DIR.exists():
+            return
+        fixture_files = sorted(FIXTURES_DIR.glob("*.yxmd"))[:1]  # one file is enough
+        if not fixture_files:
+            return
+
+        config = _make_config()
+        orchestrator = BatchOrchestrator(config)
+        callback = MagicMock()
+        orchestrator.convert_batch_multi_format(fixture_files, progress_callback=callback)
+        assert callback.call_count == len(fixture_files)
+
+    def test_format_status_helper(self):
+        """``MultiFormatFileResult.format_status`` returns the right string."""
+        from a2d.observability.batch import MultiFormatFileResult
+
+        empty = MultiFormatFileResult(file_path="/x.yxmd", workflow_name="x", multi_result=None)
+        assert empty.format_status("pyspark") == "missing"
+        assert empty.success is False

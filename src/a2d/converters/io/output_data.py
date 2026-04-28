@@ -50,11 +50,7 @@ class OutputDataConverter(ToolConverter):
         # #text (inline value), or a plain string
         file_info = cfg.get("File", "")
         if isinstance(file_info, dict):
-            file_path = (
-                file_info.get("@FilePath", "")
-                or file_info.get("FilePath", "")
-                or file_info.get("#text", "")
-            )
+            file_path = file_info.get("@FilePath", "") or file_info.get("FilePath", "") or file_info.get("#text", "")
         else:
             file_path = str(file_info) if file_info else ""
         if not file_path:
@@ -62,10 +58,22 @@ class OutputDataConverter(ToolConverter):
         connection_string = safe_get_nested(cfg, "Connection")
         table_name = safe_get_nested(cfg, "TableName")
 
-        # Detect format from extension
-        _, ext = os.path.splitext(file_path.lower()) if file_path else ("", "")
-        file_format = _EXT_TO_FORMAT.get(ext, ext.lstrip(".") if ext else "")
-        destination_type = "database" if connection_string else "file"
+        # Detect ODBC/OLEDB connection strings encoded in file_path
+        if file_path and ("odbc:" in file_path.lower() or "oledb:" in file_path.lower()):
+            destination_type = "database"
+            if "|||" in file_path:
+                # Pattern: "odbc:DSN=...|||\"Schema\".\"Table\""
+                parts = file_path.split("|||", 1)
+                connection_string = connection_string or parts[0]
+                table_name = table_name or parts[1].strip().strip('"')
+            elif not connection_string:
+                connection_string = file_path
+            file_format = ""
+        else:
+            # Detect format from extension
+            _, ext = os.path.splitext(file_path.lower()) if file_path else ("", "")
+            file_format = _EXT_TO_FORMAT.get(ext, ext.lstrip(".") if ext else "")
+            destination_type = "database" if connection_string else "file"
 
         # Write mode - check several possible config keys
         raw_mode = (
@@ -82,6 +90,22 @@ class OutputDataConverter(ToolConverter):
         if delimiter == "\\t":
             delimiter = "\t"
         encoding = safe_get_nested(cfg, "CodePage", default="utf-8")
+
+        # Partition fields (Alteryx OutputOption > Partitions)
+        partition_raw = safe_get_nested(cfg, "Partitions") or safe_get_nested(cfg, "PartitionFields")
+        partition_fields: list[str] = []
+        if partition_raw:
+            if isinstance(partition_raw, str):
+                partition_fields = [f.strip() for f in partition_raw.split(",") if f.strip()]
+            elif isinstance(partition_raw, list):
+                partition_fields = [str(f) for f in partition_raw]
+
+        # Compression codec
+        compression: str | None = (
+            safe_get_nested(cfg, "Compression") or safe_get_nested(cfg, "CompressionCodec") or None
+        )
+        if compression and compression.lower() in ("none", ""):
+            compression = None
 
         if file_path:
             file_path = html.unescape(file_path)
@@ -112,4 +136,6 @@ class OutputDataConverter(ToolConverter):
             has_header=has_header,
             delimiter=delimiter,
             encoding=encoding,
+            partition_fields=partition_fields,
+            compression=compression,
         )

@@ -19,6 +19,7 @@ from a2d.expressions.ast import (
 )
 from a2d.expressions.base_translator import BaseExpressionTranslator, BaseTranslationError
 from a2d.expressions.functions import get_function_mapping
+from a2d.utils.types import alteryx_fmt_to_spark
 
 
 class SQLTranslationError(BaseTranslationError):
@@ -67,7 +68,7 @@ class SparkSQLTranslator(BaseExpressionTranslator):
 
     def _visit_Literal(self, node: Literal) -> str:
         if node.literal_type == "string":
-            escaped = str(node.value).replace("'", "''")
+            escaped = str(node.value).replace("'", "''").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
             return f"'{escaped}'"
         if node.literal_type == "number":
             return str(node.value)
@@ -89,12 +90,32 @@ class SparkSQLTranslator(BaseExpressionTranslator):
     def _visit_FunctionCall(self, node: FunctionCall) -> str:
         mapping = get_function_mapping(node.function_name)
 
-        translated_args = [self._visit(a) for a in node.arguments]
-
         if mapping is None or mapping.sql_template is None:
+            translated_args = [self._visit(a) for a in node.arguments]
             self._warnings.append(f"No SQL template for function: {node.function_name}")
             args = ", ".join(translated_args)
             return f"{node.function_name}({args})"
+
+        # Validate argument count
+        n_args = len(node.arguments)
+        if n_args < mapping.min_args:
+            self._warnings.append(f"{node.function_name}() expects at least {mapping.min_args} arg(s), got {n_args}")
+        if mapping.max_args is not None and n_args > mapping.max_args:
+            self._warnings.append(f"{node.function_name}() expects at most {mapping.max_args} arg(s), got {n_args}")
+
+        # Translate args, handling raw_string_args (emit as unquoted string values)
+        translated_args: list[str] = []
+        for i, arg in enumerate(node.arguments):
+            if i in mapping.raw_string_args and isinstance(arg, Literal) and arg.literal_type == "string":
+                # For SQL, raw_string_args still need to be quoted strings, but we
+                # convert Alteryx date format tokens to Spark format patterns.
+                raw_val = str(arg.value)
+                if node.function_name.lower() in ("datetimeformat", "datetimeparse", "todate", "todatetime") and i == 1:
+                    raw_val = alteryx_fmt_to_spark(raw_val)
+                escaped_val = raw_val.replace("'", "''")
+                translated_args.append(f"'{escaped_val}'")
+            else:
+                translated_args.append(self._visit(arg))
 
         # Special case: Switch -> CASE expression
         if mapping.sql_template == "__SWITCH__":
@@ -110,6 +131,12 @@ class SparkSQLTranslator(BaseExpressionTranslator):
         result = template
         for i, arg_str in enumerate(translated_args):
             result = result.replace(f"{{{i}}}", arg_str)
+
+        # Strip any unsubstituted trailing-optional placeholders (e.g. ", {1}")
+        # so 1-arg calls to functions with an optional 2nd arg work cleanly.
+        import re as _re
+
+        result = _re.sub(r",\s*\{\d+\}", "", result)
 
         return result
 

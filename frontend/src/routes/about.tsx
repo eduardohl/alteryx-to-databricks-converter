@@ -41,7 +41,7 @@ export function AboutPage() {
             <tbody className="divide-y divide-[var(--border)]">
               <tr>
                 <td className="py-2 pr-4 font-medium text-[var(--fg-muted)]">Output Formats</td>
-                <td className="py-2 text-[var(--fg)]">PySpark, Delta Live Tables, Spark SQL, Workflow JSON</td>
+                <td className="py-2 text-[var(--fg)]">PySpark, Spark Declarative Pipelines, Spark SQL, Lakeflow Designer (every conversion produces all four; the highest-confidence one is flagged as &ldquo;best&rdquo;) &middot; cloud-portable Workflow JSON via <code>--cloud aws|azure|gcp</code></td>
               </tr>
               <tr>
                 <td className="py-2 pr-4 font-medium text-[var(--fg-muted)]">Supported Tools</td>
@@ -57,11 +57,15 @@ export function AboutPage() {
               </tr>
               <tr>
                 <td className="py-2 pr-4 font-medium text-[var(--fg-muted)]">Batch Mode</td>
-                <td className="py-2 text-[var(--fg)]">Convert multiple workflows with error accumulation</td>
+                <td className="py-2 text-[var(--fg)]">Convert multiple workflows with error accumulation; each file parses IR once and runs all four generators in parallel</td>
               </tr>
               <tr>
                 <td className="py-2 pr-4 font-medium text-[var(--fg-muted)]">Analysis</td>
                 <td className="py-2 text-[var(--fg)]">Migration readiness assessment with complexity scoring</td>
+              </tr>
+              <tr>
+                <td className="py-2 pr-4 font-medium text-[var(--fg-muted)]">Deploy Readiness</td>
+                <td className="py-2 text-[var(--fg)]">3-tier banner (Ready / Needs review / Cannot deploy) plus categorized warnings &mdash; CLI and UI use the same rules</td>
               </tr>
             </tbody>
           </table>
@@ -93,7 +97,7 @@ export function AboutPage() {
       <Card>
         <h3 className="text-sm font-semibold text-[var(--fg)] mb-3">Limitations</h3>
         <ul className="text-sm text-[var(--fg-muted)] space-y-1 list-disc list-inside">
-          <li>Spatial tools require Databricks Mosaic library (not available in all regions)</li>
+          <li>Spatial tools require a geospatial library (Apache Sedona, H3, or Databricks Labs Mosaic)</li>
           <li>Predictive tools generate MLlib scaffolding requiring model retraining</li>
           <li>Macro workflows may need manual parameter mapping</li>
           <li>Custom connectors require connection override configuration</li>

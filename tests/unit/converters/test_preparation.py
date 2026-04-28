@@ -91,6 +91,91 @@ class TestFilterConverter:
         assert isinstance(result, FilterNode)
         assert result.expression == ""
 
+    def test_filter_simple_contains_operator(self):
+        """Contains UI operator should produce Alteryx Contains() function call."""
+        node = make_node(
+            tool_type="Filter",
+            configuration={
+                "Mode": "Simple",
+                "Simple": {
+                    "Field": "Name",
+                    "Operator": "Contains",
+                    "Operands": {"Operand": "1"},
+                },
+            },
+        )
+        result = ConverterRegistry.convert_node(node, DEFAULT_CONFIG)
+        assert isinstance(result, FilterNode)
+        assert result.expression == 'Contains([Name], "1")'
+
+    def test_filter_simple_notcontains_operator(self):
+        """NotContains UI operator should produce !Contains(...)."""
+        node = make_node(
+            tool_type="Filter",
+            configuration={
+                "Mode": "Simple",
+                "Simple": {
+                    "Field": "InvoicingCategory",
+                    "Operator": "NotContains",
+                    "Operands": {"Operand": "HVP"},
+                },
+            },
+        )
+        result = ConverterRegistry.convert_node(node, DEFAULT_CONFIG)
+        assert isinstance(result, FilterNode)
+        assert result.expression == '!Contains([InvoicingCategory], "HVP")'
+
+    def test_filter_simple_istrue_operator(self):
+        """IsTrue UI operator should produce a bare field-ref boolean expression."""
+        node = make_node(
+            tool_type="Filter",
+            configuration={
+                "Mode": "Simple",
+                "Simple": {
+                    "Field": "IsConnected",
+                    "Operator": "IsTrue",
+                    "Operands": {"Operand": ""},
+                },
+            },
+        )
+        result = ConverterRegistry.convert_node(node, DEFAULT_CONFIG)
+        assert isinstance(result, FilterNode)
+        assert result.expression == "[IsConnected]"
+
+    def test_filter_simple_eq_quotes_string_operand(self):
+        """Equality with a string operand must auto-quote so the translator can parse it."""
+        node = make_node(
+            tool_type="Filter",
+            configuration={
+                "Mode": "Simple",
+                "Simple": {
+                    "Field": "Test Type",
+                    "Operator": "=",
+                    "Operands": {"Operand": "S&W"},
+                },
+            },
+        )
+        result = ConverterRegistry.convert_node(node, DEFAULT_CONFIG)
+        assert isinstance(result, FilterNode)
+        assert result.expression == '[Test Type] = "S&W"'
+
+    def test_filter_simple_eq_preserves_field_ref(self):
+        """When operand is itself a field ref [Foo], do not wrap in quotes."""
+        node = make_node(
+            tool_type="Filter",
+            configuration={
+                "Mode": "Simple",
+                "Simple": {
+                    "Field": "AccountingPeriod",
+                    "Operator": "=",
+                    "Operands": {"Operand": "[Production Month]"},
+                },
+            },
+        )
+        result = ConverterRegistry.convert_node(node, DEFAULT_CONFIG)
+        assert isinstance(result, FilterNode)
+        assert result.expression == "[AccountingPeriod] = [Production Month]"
+
     def test_filter_custom_mode_empty_expression(self):
         """A Filter in custom mode with no Expression element produces empty expression."""
         node = make_node(

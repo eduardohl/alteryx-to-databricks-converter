@@ -36,11 +36,7 @@ class DynamicInputConverter(ToolConverter):
 
         # File element may be a dict with #text or a plain string
         if isinstance(file_info, dict):
-            raw = (
-                file_info.get("#text", "")
-                or file_info.get("@FilePath", "")
-                or file_info.get("FilePath", "")
-            )
+            raw = file_info.get("#text", "") or file_info.get("@FilePath", "") or file_info.get("FilePath", "")
         else:
             raw = str(file_info) if file_info else ""
 
@@ -52,13 +48,13 @@ class DynamicInputConverter(ToolConverter):
             template_query = parts[1].strip() if len(parts) > 1 else ""
 
         # --- Parse Modifications list ---
-        mods_raw = (cfg.get("Modifications") or {})
+        mods_raw = cfg.get("Modifications") or {}
         if isinstance(mods_raw, dict):
             mods_raw = mods_raw.get("Modify", [])
         if isinstance(mods_raw, dict):
             mods_raw = [mods_raw]
         modifications = []
-        for m in (mods_raw or []):
+        for m in mods_raw or []:
             if isinstance(m, dict):
                 field_name = m.get("Field", "") or m.get("@Annotation", "")
                 replace_text = m.get("ReplaceText", "")

@@ -11,6 +11,7 @@ import {
   Boxes,
   Code,
   Database,
+  Layers,
   Zap,
   Clock,
   FileCheck,
@@ -26,8 +27,14 @@ const quickActions = [
   {
     icon: ArrowRightLeft,
     title: "Convert",
-    description: "Generate PySpark, DLT, or SQL code",
+    description: "Generate PySpark, Spark Declarative Pipelines, SQL, and Lakeflow in one shot — best format auto-flagged",
     to: "/convert",
+  },
+  {
+    icon: Layers,
+    title: "Batch Convert",
+    description: "Convert multiple workflows at once with progress tracking",
+    to: "/convert/batch",
   },
   {
     icon: Clock,
@@ -39,8 +46,8 @@ const quickActions = [
 
 export function HomePage() {
   const { data: stats, isLoading, error } = useStats();
-  const localHistory = useLocalHistoryStore();
-  const recentConversions = localHistory.items.slice(0, 5);
+  const localItems = useLocalHistoryStore((s) => s.items);
+  const recentConversions = localItems.slice(0, 5);
 
   return (
     <div className="space-y-10">
@@ -96,7 +103,7 @@ export function HomePage() {
       </motion.div>
 
       {/* Quick actions */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {quickActions.map((f, i) => (
           <motion.div
             key={f.title}
@@ -117,11 +124,24 @@ export function HomePage() {
         ))}
       </div>
 
+      {/* First-visit guidance */}
+      {recentConversions.length === 0 && (
+        <Card className="border-[var(--ring)]/20 bg-[var(--ring)]/5 p-4">
+          <p className="text-sm font-medium text-[var(--fg)]">New here? Start with analysis</p>
+          <p className="text-xs text-[var(--fg-muted)] mt-1">
+            Upload your .yxmd files on the{" "}
+            <Link to="/analyze" className="text-[var(--ring)] hover:underline">Analyze</Link> page
+            to see a readiness report, then{" "}
+            <Link to="/convert" className="text-[var(--ring)] hover:underline">Convert</Link> to generate code.
+          </p>
+        </Card>
+      )}
+
       {/* Engine stats */}
       {error ? (
         <div className="rounded-xl border border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30 px-4 py-3">
           <p className="text-sm text-red-700 dark:text-red-400">
-            Failed to connect to the API server.
+            Failed to connect to the API server. Start it with <code className="mx-1 rounded bg-red-100 dark:bg-red-900/40 px-1.5 py-0.5 text-xs">make serve</code> or <code className="rounded bg-red-100 dark:bg-red-900/40 px-1.5 py-0.5 text-xs">uvicorn server.main:app</code>.
           </p>
         </div>
       ) : isLoading ? (
@@ -179,7 +199,11 @@ export function HomePage() {
                         <span className="font-medium text-[var(--fg)]">{item.workflow_name}</span>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-[var(--fg-muted)]">{item.output_format}</td>
+                    <td className="px-4 py-3 text-[var(--fg-muted)]">
+                      {item.output_format === "multi" || !item.output_format
+                        ? "all formats"
+                        : item.output_format}
+                    </td>
                     <td className="px-4 py-3 text-right text-[var(--fg-muted)]">
                       {new Date(item.created_at).toLocaleDateString(undefined, {
                         month: "short",
