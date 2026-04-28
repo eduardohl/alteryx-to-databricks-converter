@@ -291,7 +291,7 @@ class TestLakeflowFormat:
         output = generator.generate(dag, "my_pipeline")
 
         assert len(output.files) == 2
-        json_file = [f for f in output.files if f.file_type == "json"][0]
+        json_file = next(f for f in output.files if f.file_type == "json")
         assert json_file.filename == "my_pipeline_lakeflow_pipeline.json"
 
         data = json.loads(json_file.content)

@@ -40,10 +40,7 @@ class AppendFieldsConverter(ToolConverter):
         cfg = parsed_node.configuration
 
         allow_all = cfg.get("AllowAllAppends", "True")
-        if isinstance(allow_all, str):
-            allow_all_appends = allow_all.lower() != "false"
-        else:
-            allow_all_appends = True
+        allow_all_appends = allow_all.lower() != "false" if isinstance(allow_all, str) else True
 
         select_target = _parse_field_ops(cfg, "SelectTargetFields")
         select_source = _parse_field_ops(cfg, "SelectSourceFields")

@@ -112,7 +112,7 @@ class SparkSQLTranslator(BaseExpressionTranslator):
             self._warnings.append(f"{node.function_name}() expects at most {mapping.max_args} arg(s), got {n_args}")
 
         # Translate args, handling raw_string_args (emit as unquoted string values)
-        translated_args: list[str] = []
+        translated_args = []
         for i, arg in enumerate(node.arguments):
             if i in mapping.raw_string_args and isinstance(arg, Literal) and arg.literal_type == "string":
                 # For SQL, raw_string_args still need to be quoted strings, but we

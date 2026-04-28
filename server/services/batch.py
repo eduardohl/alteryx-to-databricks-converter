@@ -9,6 +9,7 @@ to use ``BatchOrchestrator`` for its single-format workflow.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import tempfile
 import threading
@@ -101,10 +102,8 @@ class JobStore:
             if job.task and not job.task.done():
                 job.task.cancel()
             for q in job.subscribers:
-                try:
+                with contextlib.suppress(Exception):
                     q.put_nowait({"type": "job_expired", "message": "Job expired"})
-                except Exception:
-                    pass
         return len(expired_jobs)
 
 

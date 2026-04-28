@@ -10,7 +10,6 @@ import re
 
 from a2d.expressions.ast import (
     BinaryOp,
-    Expr,
     FieldRef,
     FunctionCall,
     IfExpr,

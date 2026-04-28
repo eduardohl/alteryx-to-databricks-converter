@@ -94,10 +94,7 @@ class ConfidenceScorer:
             if isinstance(node, UnsupportedNode):
                 unsupported += 1
 
-        if total == 0:
-            score = 100.0
-        else:
-            score = ((total - unsupported) / total) * 100.0
+        score = 100.0 if total == 0 else (total - unsupported) / total * 100.0
 
         return ConfidenceDimension(
             name="tool_coverage",

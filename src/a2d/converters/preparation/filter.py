@@ -101,10 +101,7 @@ def _build_simple_expression(cfg: dict) -> str:
     operator = safe_get_nested(cfg, "Operator")
     operands = cfg.get("Operands", {})
 
-    if isinstance(operands, dict):
-        operand = safe_get_nested(operands, "Operand")
-    else:
-        operand = str(operands) if operands else ""
+    operand = safe_get_nested(operands, "Operand") if isinstance(operands, dict) else str(operands) if operands else ""
 
     if not field_name or not operator:
         return ""

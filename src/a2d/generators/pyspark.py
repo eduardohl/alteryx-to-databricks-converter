@@ -1208,7 +1208,10 @@ class PySparkGenerator(CodeGenerator):
             lines.append("# Contains-mode find/replace: collect lookup pairs, apply sequentially")
             lines.append(f'_pairs_{node.node_id} = {lookup_var}.select("{find_field}", "{replace_field}").collect()')
             lines.append(f"{out_var} = {target_var}")
-            target_col = node.target_fields[0] if node.target_fields else find_field
+            # `target_fields` is not a field on FindReplaceNode (yet) — guard
+            # with getattr so older IR objects fall back to the find_field.
+            _tf = getattr(node, "target_fields", None)
+            target_col = _tf[0] if _tf else find_field
             lines.append(f"for _pair in _pairs_{node.node_id}:")
             lines.append(
                 f'    {out_var} = {out_var}.withColumn("{target_col}", F.regexp_replace(F.col("{target_col}"), F.lit(_pair["{find_field}"]), F.lit(_pair["{replace_field}"])))'
@@ -1221,7 +1224,10 @@ class PySparkGenerator(CodeGenerator):
             lines.append("# Regex-mode find/replace: collect lookup patterns, apply sequentially")
             lines.append(f'_pairs_{node.node_id} = {lookup_var}.select("{find_field}", "{replace_field}").collect()')
             lines.append(f"{out_var} = {target_var}")
-            target_col = node.target_fields[0] if node.target_fields else find_field
+            # `target_fields` is not a field on FindReplaceNode (yet) — guard
+            # with getattr so older IR objects fall back to the find_field.
+            _tf = getattr(node, "target_fields", None)
+            target_col = _tf[0] if _tf else find_field
             lines.append(f"for _pair in _pairs_{node.node_id}:")
             lines.append(
                 f'    {out_var} = {out_var}.withColumn("{target_col}", F.regexp_replace(F.col("{target_col}"), _pair["{find_field}"], _pair["{replace_field}"]))'
@@ -1607,7 +1613,7 @@ class PySparkGenerator(CodeGenerator):
     def _generate_TileNode(self, node: TileNode, input_vars: dict[str, str]) -> NodeCodeResult:
         inp = self._get_single_input(input_vars)
         out_var = f"df_{node.node_id}"
-        imports = ["from pyspark.sql import Window"]
+        imports = {"from pyspark.sql import Window"}
         order = (
             f'"{node.order_field}"'
             if node.order_field
@@ -1714,7 +1720,7 @@ class PySparkGenerator(CodeGenerator):
                     )
             lines += [
                 f"    _dfs_{node.node_id}.append(spark.sql(_sql_{node.node_id}))",
-                f"from pyspark.sql.types import StructType",
+                "from pyspark.sql.types import StructType",
                 f"{out_var} = _dfs_{node.node_id}[0] if _dfs_{node.node_id} else spark.createDataFrame([], StructType([]))",
                 f"for _df in _dfs_{node.node_id}[1:]:",
                 f"    {out_var} = {out_var}.unionByName(_df, allowMissingColumns=True)",

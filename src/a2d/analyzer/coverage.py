@@ -46,10 +46,7 @@ class CoverageAnalyzer:
                 unsupported_types.add(tool_type)
                 supported_types.discard(tool_type)
 
-        if unique_tool_types:
-            coverage_percentage = (len(supported_types) / len(unique_tool_types)) * 100.0
-        else:
-            coverage_percentage = 100.0
+        coverage_percentage = len(supported_types) / len(unique_tool_types) * 100.0 if unique_tool_types else 100.0
 
         return CoverageReport(
             total_nodes=total_nodes,

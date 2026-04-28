@@ -21,10 +21,7 @@ class SortConverter(ToolConverter):
         cfg = parsed_node.configuration
 
         sort_info = cfg.get("SortInfo", {})
-        if isinstance(sort_info, dict):
-            raw_fields = ensure_list(sort_info.get("Field", []))
-        else:
-            raw_fields = []
+        raw_fields = ensure_list(sort_info.get("Field", [])) if isinstance(sort_info, dict) else []
 
         sort_fields: list[SortField] = []
         for f in raw_fields:

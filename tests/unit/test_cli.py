@@ -416,11 +416,18 @@ class TestConvertCloudFlag:
         """--help should document --cloud and its default."""
         result = runner.invoke(app, ["convert", "--help"])
         assert result.exit_code == 0
-        assert "--cloud" in result.output
+        # Strip ANSI color codes — Typer/Rich injects them in help output
+        # and inserts them inside `--cloud` (rendering as `-\x1b[…]m-cloud`).
+        # Locally a TTY-aware test runner may strip them, but in CI they
+        # remain literal in `result.output` and break a substring search.
+        import re
+
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--cloud" in plain
         # Lenient: just make sure aws/azure/gcp are mentioned.
-        out_lower = result.output.lower()
-        assert "aws" in out_lower
-        assert "azure" in out_lower
+        plain_lower = plain.lower()
+        assert "aws" in plain_lower
+        assert "azure" in plain_lower
 
 
 # ── E. convert command — edge cases ───────────────────────────────────
@@ -568,7 +575,7 @@ class TestAnalyzeCommand:
         assert report.is_file()
         # Validate JSON parses.
         data = json.loads(report.read_text())
-        assert isinstance(data, (dict, list))
+        assert isinstance(data, dict | list)
 
     def test_analyze_complexity_flag(self, tmp_path):
         out = tmp_path / "report"

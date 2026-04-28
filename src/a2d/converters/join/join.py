@@ -109,10 +109,9 @@ def _parse_select_configuration(cfg: dict) -> tuple[list[FieldOperation], list[F
     # Prefer the "Join" outputConnection; fall back to the first entry
     config_dict: dict = {}
     for c in raw_configs:
-        if isinstance(c, dict):
-            if c.get("@outputConnection", "").lower() == "join":
-                config_dict = c
-                break
+        if isinstance(c, dict) and c.get("@outputConnection", "").lower() == "join":
+            config_dict = c
+            break
     if not config_dict and raw_configs:
         config_dict = raw_configs[0] if isinstance(raw_configs[0], dict) else {}
 

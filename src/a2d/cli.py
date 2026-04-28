@@ -1276,10 +1276,7 @@ def _print_multi_format_summary(
             note = (err[:37] + "...") if len(err) > 40 else err
         # Per-format generator time is typically tens of milliseconds — render
         # in ms when sub-second so users see real numbers instead of "0.0s".
-        if elapsed < 1.0:
-            duration_str = f"{elapsed * 1000:.0f}ms"
-        else:
-            duration_str = f"{elapsed:.1f}s"
+        duration_str = f"{elapsed * 1000:.0f}ms" if elapsed < 1.0 else f"{elapsed:.1f}s"
         table.add_row(fmt.value, label, status, files_n, cov_str, conf_str, duration_str, note)
     console.print(table)
 

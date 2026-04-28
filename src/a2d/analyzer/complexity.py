@@ -115,7 +115,7 @@ class ComplexityAnalyzer:
             # Count expressions
             if isinstance(node, FormulaNode):
                 expression_count += len(node.formulas)
-            elif isinstance(node, (FilterNode, MultiRowFormulaNode)):
+            elif isinstance(node, FilterNode | MultiRowFormulaNode):
                 if node.expression:
                     expression_count += 1
             elif isinstance(node, MultiFieldFormulaNode):

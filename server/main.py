@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -67,10 +67,8 @@ async def lifespan(app: FastAPI):
     cleanup_task = asyncio.create_task(_evict_expired_jobs())
     yield
     cleanup_task.cancel()
-    try:
+    with suppress(asyncio.CancelledError):
         await cleanup_task
-    except asyncio.CancelledError:
-        pass
     logger.info("a2d API shutting down")
 
 

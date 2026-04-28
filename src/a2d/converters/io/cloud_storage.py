@@ -66,10 +66,7 @@ class CloudStorageConverter(ToolConverter):
 
         # Extract path - handle @-prefixed dict keys
         path = ""
-        if isinstance(cfg.get("Path"), dict):
-            path = cfg.get("Path", {}).get("@value", "")
-        else:
-            path = safe_get(cfg, "Path")
+        path = cfg.get("Path", {}).get("@value", "") if isinstance(cfg.get("Path"), dict) else safe_get(cfg, "Path")
 
         if not path:
             if isinstance(cfg.get("FilePath"), dict):

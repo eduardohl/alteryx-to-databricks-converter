@@ -625,7 +625,7 @@ class SQLGenerator(CodeGenerator):
                     )
                 else:
                     fill_parts.append(f"COALESCE(`{fld}`, '') AS `{fld}`")
-            sel = ", ".join(["*"] + fill_parts)
+            sel = ", ".join(["*", *fill_parts])
             return f"SELECT {sel} FROM {inp}", warnings
 
         if isinstance(node, XMLParseNode):

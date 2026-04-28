@@ -176,7 +176,7 @@ class WorkflowDAG:
         data_components = [
             c
             for c in components
-            if not all(isinstance(self._graph.nodes[nid]["ir"], (CommentNode, WidgetNode)) for nid in c)
+            if not all(isinstance(self._graph.nodes[nid]["ir"], CommentNode | WidgetNode) for nid in c)
         ]
         if len(data_components) > 1:
             issues.append(

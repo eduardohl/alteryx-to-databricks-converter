@@ -73,7 +73,7 @@ class UnityCatalogGenerator:
                 stmt = self._write_node_ddl(node)
                 if stmt:
                     statements.append(stmt)
-            elif isinstance(node, (CloudStorageNode, DynamicInputNode)):
+            elif isinstance(node, CloudStorageNode | DynamicInputNode):
                 stmt = self._external_node_ddl(node)
                 if stmt:
                     statements.append(stmt)

@@ -75,4 +75,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: databricks/setup-cli@main
+      # Dummy auth — the CLI's bundle validate requires *something* in the
+      # auth slot even though it doesn't actually call any APIs. We use a
+      # placeholder host + token so the YAML is still validated end-to-end.
       - run: databricks bundle validate
+        env:
+          DATABRICKS_HOST: https://example.cloud.databricks.com
+          DATABRICKS_TOKEN: dapi-placeholder-for-ci-validation-only
