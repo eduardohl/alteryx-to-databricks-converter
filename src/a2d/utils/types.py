@@ -34,17 +34,20 @@ _SQL_CURRENT_DATE_RE = re.compile(r"\bCurrent\s+Date\b", re.IGNORECASE)
 _SQL_CURRENT_TIME_RE = re.compile(r"\bCurrent\s+Time\b", re.IGNORECASE)
 # Double-quoted SQL identifier (no spaces inside, at least one char)
 _SQL_DQUOTE_ID_RE = re.compile(r'"([^"\s][^"]*[^"\s]|[^"\s])"')
+# T-SQL square-bracket identifier: [name] → `name`
+_SQL_BRACKET_ID_RE = re.compile(r'\[([^\[\]]+)\]')
 
 
 def normalize_sql_for_spark(query: str) -> tuple[str, list[str]]:
     """Apply targeted fixes to an Alteryx SQL query for Spark SQL compatibility.
 
     Fixes:
-    - GETDATE() / NOW() / SYSDATE  →  CURRENT_TIMESTAMP()
-    - Current Date                 →  CURRENT_DATE()
-    - Current Time                 →  CURRENT_TIME()
-    - Double-quoted SQL identifiers →  backtick identifiers
-    - Hyphens in identifier names   →  underscores
+    - GETDATE() / NOW() / SYSDATE        →  CURRENT_TIMESTAMP()
+    - Current Date                        →  CURRENT_DATE()
+    - Current Time                        →  CURRENT_TIME()
+    - Double-quoted SQL identifiers       →  backtick identifiers
+    - T-SQL square-bracket identifiers    →  backtick identifiers
+    - Hyphens in identifier names         →  underscores
 
     Returns (normalized_query, warnings).
     """
@@ -59,6 +62,7 @@ def normalize_sql_for_spark(query: str) -> tuple[str, list[str]]:
         return f"`{m.group(1).replace('-', '_')}`"
 
     result = _SQL_DQUOTE_ID_RE.sub(_to_backtick, result)
+    result = _SQL_BRACKET_ID_RE.sub(_to_backtick, result)
     return result, []
 
 
