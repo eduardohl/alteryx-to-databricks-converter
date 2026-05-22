@@ -28,7 +28,8 @@ variables:
     description: "[deprecated — set DATABRICKS_HOST or use --profile instead]"
     default: ""
   lakebase_endpoint:
-    description: "Lakebase endpoint (projects/<id>/branches/<id>/endpoints/<id>) — required."
+    description: "Lakebase endpoint (projects/<id>/branches/<id>/endpoints/<id>). Override with --var or LAKEBASE_ENDPOINT env for non-default workspaces."
+    default: "projects/a2d-lakebase-autoscale/branches/br-winter-sky-d2581xfi/endpoints/ep-shiny-art-d2ooiahz"
   provision_lakebase:
     description: "If true, the bundle provisions a Lakebase database_instance for you."
     default: false
@@ -45,7 +46,7 @@ variables:
   # not picked up by the Apps runtime (e.g. older bundle CLI). Safe to leave empty.
   pg_host:
     description: "[legacy] Lakebase PostgreSQL hostname (only required if not using apps.resources: binding)."
-    default: ""
+    default: "ep-shiny-art-d2ooiahz.database.us-east-1.cloud.databricks.com"
   pg_user:
     description: "[legacy] Service principal client ID (only required if not using apps.resources: binding)."
     default: ""

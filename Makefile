@@ -43,11 +43,19 @@ run: dev frontend serve ## Full setup and run
 lock: ## Generate requirements.lock
 	pip-compile --strip-extras -o requirements.lock pyproject.toml
 
-deploy-dev: frontend ## Deploy to Databricks Apps (dev)
-	databricks bundle deploy -t dev
+# Resolve a Databricks CLI ≥ 0.100.0 — a pyenv shim may resolve to legacy CLI
+# v0.18.0, which breaks the Terraform provider used internally by `bundle deploy`
+# ("legacy databricks CLI detected; upgrade to >= 0.100.0").
+DATABRICKS_CLI := $(shell test -x /opt/homebrew/bin/databricks && echo /opt/homebrew/bin/databricks || command -v databricks)
+DBX := DATABRICKS_CLI_PATH=$(DATABRICKS_CLI) $(DATABRICKS_CLI)
 
-deploy-prod: frontend ## Deploy to Databricks Apps (prod)
-	databricks bundle deploy -t prod
+deploy-dev: frontend ## Deploy to Databricks Apps (dev) — uploads files AND triggers app restart
+	$(DBX) bundle deploy -t dev
+	$(DBX) bundle run -t dev a2d_app
+
+deploy-prod: frontend ## Deploy to Databricks Apps (prod) — uploads files AND triggers app restart
+	$(DBX) bundle deploy -t prod
+	$(DBX) bundle run -t prod a2d_app
 
 bundle-validate: ## Validate DAB configuration
-	databricks bundle validate
+	$(DBX) bundle validate
