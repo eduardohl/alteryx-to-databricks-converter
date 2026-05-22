@@ -33,7 +33,7 @@ clean: ## Remove build artifacts
 all: lint typecheck test ## Lint + typecheck + test
 
 frontend: ## Build React frontend
-	cd frontend && npm install && npm run build
+	cd frontend && npm install && BUILD_SHA=$$(git rev-parse --short HEAD) BUILD_DATE=$$(date -u +%Y-%m-%dT%H:%M:%SZ) npm run build
 
 serve: ## Start FastAPI dev server
 	PYTHONPATH=src:. uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload

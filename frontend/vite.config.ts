@@ -5,6 +5,10 @@ import { resolve } from "path";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  define: {
+    __BUILD_SHA__: JSON.stringify(process.env.BUILD_SHA || "dev"),
+    __BUILD_DATE__: JSON.stringify(process.env.BUILD_DATE || ""),
+  },
   resolve: {
     alias: {
       "@": resolve(__dirname, "src"),

@@ -19,6 +19,9 @@ import { cn } from "@/lib/cn";
 import { useThemeStore } from "@/stores/theme";
 import { Button } from "@/components/ui/button";
 
+declare const __BUILD_SHA__: string;
+declare const __BUILD_DATE__: string;
+
 interface NavItem {
   to: string;
   label: string;
@@ -162,6 +165,21 @@ export function Sidebar() {
             )}
             {theme === "dark" ? "Light mode" : "Dark mode"}
           </Button>
+        </div>
+
+        {/* Build version */}
+        <div
+          className="border-t border-[var(--border)] px-4 py-2 text-[10px] font-mono text-[var(--fg-muted)]"
+          title={__BUILD_DATE__ ? `Built ${__BUILD_DATE__}` : undefined}
+        >
+          <a
+            href={`https://github.com/eduardohl/alteryx-to-databricks-converter/commit/${__BUILD_SHA__}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-[var(--fg)]"
+          >
+            build {__BUILD_SHA__}
+          </a>
         </div>
       </aside>
     </>
