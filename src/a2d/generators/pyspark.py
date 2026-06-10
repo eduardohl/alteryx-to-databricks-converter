@@ -110,6 +110,30 @@ from a2d.ir.nodes import (
 
 logger = logging.getLogger("a2d.generators.pyspark")
 
+# Detect Windows drive paths (C:\...) or UNC paths (\\server\share)
+_WINDOWS_PATH_RE = re.compile(r'^(?:[A-Za-z]:\\|\\\\)')
+
+# Characters not valid in a Python identifier
+_NON_IDENT_RE = re.compile(r'[^A-Z0-9]+')
+
+
+def _is_local_path(path: str) -> bool:
+    """Return True if path looks like a local Windows or UNC path."""
+    return bool(_WINDOWS_PATH_RE.match(path))
+
+
+def _make_output_var_name(file_path: str) -> str:
+    """Derive a Python variable name from a file path.
+
+    E.g. ``C:\\Alteryx Output\\My Report.csv`` -> ``OUTPUT_MY_REPORT_CSV``
+    """
+    import os
+    filename = os.path.basename(file_path)
+    # Replace extension dot with underscore, then strip non-alphanumeric
+    base = filename.replace(".", "_")
+    sanitized = _NON_IDENT_RE.sub("_", base.upper()).strip("_")
+    return f"OUTPUT_{sanitized}"
+
 
 # ---------------------------------------------------------------------------
 # PySpark Generator
@@ -122,6 +146,8 @@ class PySparkGenerator(CodeGenerator):
     def __init__(self, config: ConversionConfig) -> None:
         super().__init__(config)
         self._translator = PySparkTranslator()
+        # Populated during generate(); maps var_name -> (original_path, filename)
+        self._output_path_vars: dict[str, tuple[str, str]] = {}
 
     # -- Public API ---------------------------------------------------------
 
@@ -133,6 +159,7 @@ class PySparkGenerator(CodeGenerator):
             "from pyspark.sql import Window",
         }
         var_map: dict[int, dict[str, str]] = {}  # node_id -> {anchor: var_name}
+        self._output_path_vars = {}  # reset for this run
         cells: list[str] = []
         node_count = 0
         unsupported_count = 0
@@ -174,7 +201,28 @@ class PySparkGenerator(CodeGenerator):
         # Build notebook content
         import_cell = "\n".join(sorted(all_imports))
         separator = "\n\n# COMMAND ----------\n\n"
-        notebook_body = separator.join([import_cell] + cells)
+
+        # Prepend output path configuration cell when local/Windows paths were detected
+        leading_cells: list[str] = [import_cell]
+        if self._output_path_vars:
+            config_lines = [
+                "# =================================================================",
+                "# OUTPUT PATH CONFIGURATION",
+                "# Update each variable to its target Unity Catalog Volume path.",
+                "# Format: /Volumes/<catalog>/<schema>/<volume>/<filename>",
+                "# Alternatively, replace .write.format(...).save(VAR) with",
+                "#   .write.mode('overwrite').saveAsTable('catalog.schema.table')",
+                "# to write as a managed Delta table instead.",
+                "# =================================================================",
+            ]
+            for var_name, (original_path, filename) in self._output_path_vars.items():
+                config_lines.append(
+                    f'{var_name} = "/Volumes/catalog/schema/volume/{filename}"'
+                    f"  # was: {original_path}"
+                )
+            leading_cells.append("\n".join(config_lines))
+
+        notebook_body = separator.join(leading_cells + cells)
         notebook_content = "# Databricks notebook source\n" + separator + notebook_body + "\n"
 
         files = [
@@ -304,6 +352,23 @@ class PySparkGenerator(CodeGenerator):
                     f'{inp}.write.mode("{mode}").saveAsTable("{catalog}.{schema}.{table}")',
                 ]
                 warnings.append(f"Output node {node.node_id}: '{fmt}' format replaced with Delta table")
+            elif _is_local_path(path):
+                # Windows / UNC path: replace with a named variable so the user
+                # only needs to update the configuration cell at the top.
+                import os
+                filename = os.path.basename(path)
+                var_name = _make_output_var_name(path)
+                # Avoid duplicate vars for identical paths
+                if var_name not in self._output_path_vars:
+                    self._output_path_vars[var_name] = (path, filename)
+                lines = [
+                    f"# Original output path: {path}",
+                    f'{inp}.write.format("{fmt}").mode("{mode}").save({var_name})',
+                ]
+                warnings.append(
+                    f"Output node {node.node_id}: local path '{path}' replaced with variable "
+                    f"'{var_name}' — update the OUTPUT PATH CONFIGURATION cell above."
+                )
             else:
                 lines = [f'{inp}.write.format("{fmt}").mode("{mode}").save("{path}")']
 
@@ -315,7 +380,24 @@ class PySparkGenerator(CodeGenerator):
         rows_repr = repr(node.data_rows) if node.data_rows else "[]"
         schema_repr = repr(node.field_names) if node.field_names else "[]"
 
-        lines = [f"{out_var} = spark.createDataFrame({rows_repr}, schema={schema_repr})"]
+        lines: list[str] = []
+
+        # Detect SQL Server bracket identifiers ([schema].[table]) in the data
+        # rows — these are query strings that need UC table reference updates.
+        bracket_re = re.compile(r'\[[^\[\]]+\]')
+        has_bracket_sql = any(
+            isinstance(val, str) and bracket_re.search(val)
+            for row in (node.data_rows or [])
+            for val in (row if isinstance(row, (list, tuple)) else [row])
+        )
+        if has_bracket_sql:
+            lines += [
+                "# NOTE: The SQL queries below use SQL Server bracket-quoted identifiers and",
+                "# three-part naming ([server].[schema].[table]). Update table references to",
+                "# Databricks Unity Catalog format (catalog.schema.table) after migration.",
+            ]
+
+        lines.append(f"{out_var} = spark.createDataFrame({rows_repr}, schema={schema_repr})")
         return NodeCodeResult(
             code_lines=lines,
             output_vars={"Output": out_var},

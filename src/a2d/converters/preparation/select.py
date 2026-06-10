@@ -63,6 +63,8 @@ class SelectConverter(ToolConverter):
         operations = []
         for f in raw_fields:
             if isinstance(f, dict):
+                if f.get("@field", "").startswith("*"):  # Skip Alteryx wildcard markers (e.g. *Unknown)
+                    continue
                 operations.append(_parse_field_operation(f))
 
         # Check for "*Unknown" wildcard field

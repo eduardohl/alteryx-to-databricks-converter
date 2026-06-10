@@ -171,8 +171,9 @@ _register(
 )
 _register("DateTimeFormat", "F.date_format({0}, {1})", "DATE_FORMAT({0}, {1})", 2, 2)
 _register("DateTimeParse", "F.to_timestamp({0}, {1})", "TO_TIMESTAMP({0}, {1})", 2, 2)
-_register("DateTimeTrim", "F.date_trunc({1}, {0})", "DATE_TRUNC({1}, {0})", 2, 2)
-_register("DateTimeFirstOfMonth", "F.trunc({0}, 'month')", "TRUNC({0}, 'month')", 1, 1)
+_register("DateTimeTrim", "__DATETIMETRIM__", "__DATETIMETRIM__", 2, 2)
+_register("DateTimeFirstOfMonth", "F.trunc(F.current_date(), 'month')", "TRUNC(CURRENT_DATE(), 'month')", 0, 0)
+_register("DateTimeLastOfMonth", "F.last_day(F.current_date())", "LAST_DAY(CURRENT_DATE())", 0, 0)
 _register("DateTimeDayOfWeek", "F.dayofweek({0})", "DAYOFWEEK({0})", 1, 1)
 
 # ---------------------------------------------------------------------------

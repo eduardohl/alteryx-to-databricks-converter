@@ -116,6 +116,12 @@ class ParsedWorkflow:
 PLUGIN_NAME_MAP: dict[str, tuple[str, str]] = {
     # ── IO ──────────────────────────────────────────────────────────────
     "AlteryxBasePluginsGui.DbFileInput.DbFileInput": ("Input", "io"),
+    # ── LockIn (push-down execution layer — maps to equivalent IR nodes) ─
+    "LockInGui.LockInInput.LockInInput":                 ("LockInInput",       "io"),
+    "LockInGui.LockInStreamOut.LockInStreamOut":         ("LockInStreamOut",   "io"),
+    "LockInGui.LockInSummarize.LockInSummarize":         ("LockInSummarize",   "io"),
+    "LockInGui.LockInJoin.LockInJoin":                   ("LockInJoin",        "io"),
+    "LockInGui.LockInUnion.LockInUnion":                 ("LockInUnion",       "io"),
     "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput": ("Output", "io"),
     "AlteryxBasePluginsGui.TextInput.TextInput": ("TextInput", "io"),
     "AlteryxBasePluginsGui.BrowseV2.BrowseV2": ("Browse", "io"),
@@ -322,6 +328,32 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
         "unsupported",
         "Renames fields based on a lookup or formula; requires manual conversion",
         "withColumnRenamed",
+    ),
+    # ── LockIn (push-down DB execution) ─────────────────────────────────
+    "LockInInput": ToolMetadata(
+        "deterministic",
+        "Server-side DB query; maps to spark.sql / spark.table",
+        "spark.sql / spark.table",
+    ),
+    "LockInStreamOut": ToolMetadata(
+        "deterministic",
+        "Server-side sort; maps to DataFrame.sort",
+        "DataFrame.sort",
+    ),
+    "LockInSummarize": ToolMetadata(
+        "deterministic",
+        "Server-side aggregation; maps to DataFrame.groupBy",
+        "DataFrame.groupBy",
+    ),
+    "LockInJoin": ToolMetadata(
+        "deterministic",
+        "Server-side join; maps to DataFrame.join",
+        "DataFrame.join",
+    ),
+    "LockInUnion": ToolMetadata(
+        "deterministic",
+        "Server-side union; maps to DataFrame.union / unionByName",
+        "DataFrame.union / unionByName",
     ),
     # ── Preparation ─────────────────────────────────────────────────────
     "Select": ToolMetadata(

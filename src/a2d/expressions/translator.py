@@ -24,6 +24,50 @@ class TranslationError(BaseTranslationError):
     """Raised when the translator cannot handle an AST node."""
 
 
+# Map Alteryx DateTimeTrim mode strings to Spark date_trunc format strings
+_DATETIMETRIM_MODE_MAP: dict[str, str] = {
+    "firstofmonth": "month",
+    "firstofyear": "year",
+    "firstofhour": "hour",
+    "firstofminute": "minute",
+    "firstofsecond": "second",
+    "firstofday": "day",
+    "firstofweek": "week",
+}
+
+# Map Alteryx/strftime date format tokens to Java SimpleDateFormat tokens
+# (used by Spark's date_format / to_date / to_timestamp)
+_STRFTIME_TO_JAVA: dict[str, str] = {
+    "%Y": "yyyy",
+    "%y": "yy",
+    "%m": "MM",
+    "%d": "dd",
+    "%H": "HH",
+    "%I": "hh",
+    "%M": "mm",
+    "%S": "ss",
+    "%p": "a",
+    "%A": "EEEE",
+    "%a": "EEE",
+    "%B": "MMMM",
+    "%b": "MMM",
+    "%j": "DDD",
+    "%u": "u",   # ISO weekday (1=Monday … 7=Sunday)
+    "%w": "e",   # weekday (1=Sunday in strftime, use 'e' as approx)
+    "%Z": "z",
+    "%z": "Z",
+    "%f": "SSSSSS",
+}
+
+
+def _strftime_to_java(fmt: str) -> str:
+    """Convert a strftime-style format string to Java SimpleDateFormat."""
+    result = fmt
+    for strftime_token, java_token in _STRFTIME_TO_JAVA.items():
+        result = result.replace(strftime_token, java_token)
+    return result
+
+
 # Map Alteryx comparison operators to PySpark operators
 _CMP_MAP = {
     "=": "==",
@@ -100,6 +144,17 @@ class PySparkTranslator(BaseExpressionTranslator):
         if mapping.pyspark_template == "__SWITCH__":
             return self._translate_switch_pyspark(translated_args)
 
+        # Special case: DateTimeTrim(col, mode) — map Alteryx mode to Spark format
+        if mapping.pyspark_template == "__DATETIMETRIM__":
+            return self._translate_datetimetrim_pyspark(node, translated_args)
+
+        # Special case: DateTimeFormat(col, fmt) — convert strftime tokens to Java format
+        if node.function_name == "DateTimeFormat" and len(node.arguments) == 2:
+            fmt_arg = node.arguments[1]
+            if isinstance(fmt_arg, Literal) and fmt_arg.literal_type == "string":
+                java_fmt = _strftime_to_java(str(fmt_arg.value))
+                return f'F.date_format({translated_args[0]}, "{java_fmt}")'
+
         template = mapping.pyspark_template
 
         # Handle variable-args placeholder
@@ -127,6 +182,31 @@ class PySparkTranslator(BaseExpressionTranslator):
             result += f".when({value} == {val}, {res})"
         result += f".otherwise({default})"
         return result
+
+    def _translate_datetimetrim_pyspark(self, node: FunctionCall, translated_args: list[str]) -> str:
+        """Translate DateTimeTrim(col, mode) to F.date_trunc or F.last_day."""
+        if len(translated_args) < 2:
+            return "F.lit(None)"
+        col_expr = translated_args[0]
+        # The mode arg is a string literal — extract the raw string value
+        mode_arg = node.arguments[1]
+        if isinstance(mode_arg, Literal) and mode_arg.literal_type == "string":
+            mode_key = str(mode_arg.value).lower()
+        else:
+            # Non-literal mode: fall back to the translated expression
+            mode_expr = translated_args[1]
+            self._warnings.append(
+                "DateTimeTrim: mode is not a string literal — emitting F.date_trunc with raw expression"
+            )
+            return f"F.date_trunc({mode_expr}, {col_expr})"
+
+        if mode_key == "lastofmonth":
+            return f"F.last_day({col_expr})"
+        spark_mode = _DATETIMETRIM_MODE_MAP.get(mode_key)
+        if spark_mode is None:
+            self._warnings.append(f"DateTimeTrim: unknown mode '{mode_key}' — emitting as-is")
+            return f'F.date_trunc("{mode_key}", {col_expr})'
+        return f'F.date_trunc("{spark_mode}", {col_expr})'
 
     def _visit_IfExpr(self, node: IfExpr) -> str:
         cond = self._visit(node.condition)
