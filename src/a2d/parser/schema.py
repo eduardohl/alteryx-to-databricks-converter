@@ -117,11 +117,13 @@ PLUGIN_NAME_MAP: dict[str, tuple[str, str]] = {
     # ── IO ──────────────────────────────────────────────────────────────
     "AlteryxBasePluginsGui.DbFileInput.DbFileInput": ("Input", "io"),
     # ── LockIn (push-down execution layer — maps to equivalent IR nodes) ─
-    "LockInGui.LockInInput.LockInInput":                 ("LockInInput",       "io"),
-    "LockInGui.LockInStreamOut.LockInStreamOut":         ("LockInStreamOut",   "io"),
-    "LockInGui.LockInSummarize.LockInSummarize":         ("LockInSummarize",   "io"),
-    "LockInGui.LockInJoin.LockInJoin":                   ("LockInJoin",        "io"),
-    "LockInGui.LockInUnion.LockInUnion":                 ("LockInUnion",       "io"),
+    "LockInGui.LockInInput.LockInInput":                         ("LockInInput",        "io"),
+    "LockInGui.LockInStreamOut.LockInStreamOut":                 ("LockInStreamOut",    "io"),
+    "LockInGui.LockInSummarize.LockInSummarize":                 ("LockInSummarize",    "io"),
+    "LockInGui.LockInJoin.LockInJoin":                           ("LockInJoin",         "io"),
+    "LockInGui.LockInUnion.LockInUnion":                         ("LockInUnion",        "io"),
+    "LockInGui.LockInDynamicInput.LockInDynamicInput":           ("LockInDynamicInput", "io"),
+    "LockInGui.LockInSelect.LockInSelect":                       ("LockInSelect",       "io"),
     "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput": ("Output", "io"),
     "AlteryxBasePluginsGui.TextInput.TextInput": ("TextInput", "io"),
     "AlteryxBasePluginsGui.BrowseV2.BrowseV2": ("Browse", "io"),
@@ -354,6 +356,16 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
         "deterministic",
         "Server-side union; maps to DataFrame.union / unionByName",
         "DataFrame.union / unionByName",
+    ),
+    "LockInDynamicInput": ToolMetadata(
+        "deterministic",
+        "Server-side dynamic query executor; requires manual spark.sql() conversion",
+        "spark.sql (manual)",
+    ),
+    "LockInSelect": ToolMetadata(
+        "deterministic",
+        "Server-side column selection; maps to DataFrame select/drop",
+        "DataFrame.select / drop",
     ),
     # ── Preparation ─────────────────────────────────────────────────────
     "Select": ToolMetadata(

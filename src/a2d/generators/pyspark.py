@@ -7,6 +7,7 @@ Databricks notebook with ``# COMMAND ----------`` cell separators.
 from __future__ import annotations
 
 import logging
+import ntpath
 import re
 
 from a2d.config import ConversionConfig
@@ -127,8 +128,7 @@ def _make_output_var_name(file_path: str) -> str:
 
     E.g. ``C:\\Alteryx Output\\My Report.csv`` -> ``OUTPUT_MY_REPORT_CSV``
     """
-    import os
-    filename = os.path.basename(file_path)
+    filename = ntpath.basename(file_path)  # ntpath handles \ on macOS/Linux correctly
     # Replace extension dot with underscore, then strip non-alphanumeric
     base = filename.replace(".", "_")
     sanitized = _NON_IDENT_RE.sub("_", base.upper()).strip("_")
@@ -355,8 +355,7 @@ class PySparkGenerator(CodeGenerator):
             elif _is_local_path(path):
                 # Windows / UNC path: replace with a named variable so the user
                 # only needs to update the configuration cell at the top.
-                import os
-                filename = os.path.basename(path)
+                filename = ntpath.basename(path)  # ntpath handles \ on macOS/Linux
                 var_name = _make_output_var_name(path)
                 # Avoid duplicate vars for identical paths
                 if var_name not in self._output_path_vars:
@@ -443,7 +442,12 @@ class PySparkGenerator(CodeGenerator):
                 expr = self._translator.translate_string(node.expression)
                 warnings.extend(self._translator.warnings)
             except BaseTranslationError as exc:
-                expr = f'F.expr("{node.expression}")'
+                safe_expr = node.expression.replace('"', "'")
+                lines += [
+                    f"# TODO: manual conversion required — filter expression parse failed: {exc}",
+                    f'# Original Alteryx expression: "{safe_expr}"',
+                ]
+                expr = "F.lit(True)  # PLACEHOLDER — replace with correct filter condition"
                 warnings.append(f"Filter expression fallback for node {node.node_id}: {exc}")
 
             if need_true and need_false:
@@ -483,7 +487,10 @@ class PySparkGenerator(CodeGenerator):
                 expr = self._translator.translate_string(fixed_expression)
                 warnings.extend(self._translator.warnings)
             except (BaseTranslationError, ParserError) as exc:
-                expr = f'F.expr("{formula.expression}")'
+                safe_expr = formula.expression.replace('"', "'")
+                lines.append(f"# TODO: manual conversion required — expression parse failed: {exc}")
+                lines.append(f'# Original Alteryx expression: "{safe_expr}"')
+                expr = "F.lit(None)  # PLACEHOLDER"
                 warnings.append(f"Formula expression fallback for '{formula.output_field}': {exc}")
             lines.append(f'{out_var} = {out_var}.withColumn("{formula.output_field}", {expr})')
 
@@ -571,8 +578,11 @@ class PySparkGenerator(CodeGenerator):
             direction = "asc" if sf.ascending else "desc"
             sort_exprs.append(f'F.col("{sf.field_name}").{direction}()')
 
-        sort_str = ", ".join(sort_exprs) if sort_exprs else ""
-        lines = [f"{out_var} = {inp}.orderBy({sort_str})"]
+        if not sort_exprs:
+            lines = [f"{out_var} = {inp}  # sort node with no fields configured — passthrough"]
+        else:
+            sort_str = ", ".join(sort_exprs)
+            lines = [f"{out_var} = {inp}.orderBy({sort_str})"]
 
         return NodeCodeResult(
             code_lines=lines,

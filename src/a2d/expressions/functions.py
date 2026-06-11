@@ -153,14 +153,7 @@ _register("DateTimeDay", "F.dayofmonth({0})", "DAYOFMONTH({0})", 1, 1)
 _register("DateTimeHour", "F.hour({0})", "HOUR({0})", 1, 1)
 _register("DateTimeMinutes", "F.minute({0})", "MINUTE({0})", 1, 1)
 _register("DateTimeSeconds", "F.second({0})", "SECOND({0})", 1, 1)
-_register(
-    "DateTimeAdd",
-    "F.expr(f'dateadd({{{2}}}, {{{1}}}, {{{0}}})')",
-    "DATEADD({2}, {1}, {0})",
-    3,
-    3,
-    notes="Args: datetime, interval_count, interval_type",
-)
+_register("DateTimeAdd", "__DATETIMEADD__", "DATEADD({2}, {1}, {0})", 3, 3)
 _register(
     "DateTimeDiff",
     "F.datediff({0}, {1})",

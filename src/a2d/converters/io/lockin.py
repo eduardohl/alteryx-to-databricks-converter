@@ -21,6 +21,7 @@ from a2d.ir.nodes import (
     UnionNode,
 )
 from a2d.converters.join.join import JoinConverter
+from a2d.converters.preparation.select import SelectConverter
 from a2d.parser.schema import ParsedNode
 
 # Reuse summarize action map
@@ -96,12 +97,14 @@ class LockInStreamOutConverter(ToolConverter):
         # LockIn StreamOut XML: <Sort value="True/False"><SortInfo><Field field="..." order="..."/></SortInfo></Sort>
         sort_section = cfg.get("Sort", {})
         if isinstance(sort_section, dict):
-            sort_info = sort_section.get("SortInfo", {})
+            sort_enabled = sort_section.get("@value", "True").lower() != "false"
+            sort_info = sort_section.get("SortInfo", {}) if sort_enabled else {}
         else:
             sort_info = {}
+            sort_enabled = False
 
         if isinstance(sort_info, dict):
-            raw_fields = ensure_list(sort_info.get("Field", []))
+            raw_fields = ensure_list(sort_info.get("Field", [])) if sort_enabled else []
         else:
             raw_fields = []
 
@@ -220,3 +223,59 @@ class LockInUnionConverter(ToolConverter):
             mode=mode,
             allow_missing=True,
         )
+
+
+@ConverterRegistry.register
+class LockInDynamicInputConverter(ToolConverter):
+    """Converts LockIn DynamicInput (runtime query from upstream column) to :class:`ReadNode`.
+
+    This tool executes a SQL string from an upstream data column against a database.
+    It cannot be auto-translated; a manual conversion note is emitted.
+    """
+
+    @property
+    def supported_tool_types(self) -> list[str]:
+        return ["LockInDynamicInput"]
+
+    def convert(self, parsed_node: ParsedNode, config: ConversionConfig) -> IRNode:
+        cfg = parsed_node.configuration
+        connection_string = safe_get(cfg, "Connection") or safe_get(cfg, "ConnectionString") or ""
+
+        return ReadNode(
+            node_id=parsed_node.tool_id,
+            original_tool_type=parsed_node.tool_type,
+            original_plugin_name=parsed_node.plugin_name,
+            annotation=parsed_node.annotation,
+            position=parsed_node.position,
+            conversion_confidence=0.2,
+            conversion_notes=[
+                "LockInDynamicInput executes a SQL query string stored in an upstream column value.",
+                "Manual conversion required: collect the query string from the upstream DataFrame row,",
+                "then call spark.sql(query_string) to execute it.",
+            ],
+            source_type="database",
+            file_path="",
+            connection_string=connection_string,
+            table_name="",
+            query="",
+            file_format="",
+            has_header=True,
+            delimiter=",",
+            encoding="utf-8",
+            record_limit=None,
+        )
+
+
+@ConverterRegistry.register
+class LockInSelectConverter(ToolConverter):
+    """Converts LockIn Select (server-side column selection) to :class:`SelectNode`.
+
+    Delegates to SelectConverter since the XML structure is identical.
+    """
+
+    @property
+    def supported_tool_types(self) -> list[str]:
+        return ["LockInSelect"]
+
+    def convert(self, parsed_node: ParsedNode, config: ConversionConfig) -> IRNode:
+        return SelectConverter().convert(parsed_node, config)

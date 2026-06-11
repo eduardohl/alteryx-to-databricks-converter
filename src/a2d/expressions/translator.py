@@ -24,6 +24,23 @@ class TranslationError(BaseTranslationError):
     """Raised when the translator cannot handle an AST node."""
 
 
+# Map Alteryx DateTimeAdd unit strings to PySpark expression templates
+# {col} = translated column expression, {n} = translated count expression
+_DATETIMEADD_UNIT_MAP: dict[str, str] = {
+    "day":     "F.date_add({col}, {n})",
+    "days":    "F.date_add({col}, {n})",
+    "month":   "F.add_months({col}, {n})",
+    "months":  "F.add_months({col}, {n})",
+    "year":    "F.add_months({col}, ({n}) * 12)",
+    "years":   "F.add_months({col}, ({n}) * 12)",
+    "hour":    "({col}.cast('timestamp').cast('long') + ({n}) * 3600).cast('timestamp')",
+    "hours":   "({col}.cast('timestamp').cast('long') + ({n}) * 3600).cast('timestamp')",
+    "minute":  "({col}.cast('timestamp').cast('long') + ({n}) * 60).cast('timestamp')",
+    "minutes": "({col}.cast('timestamp').cast('long') + ({n}) * 60).cast('timestamp')",
+    "second":  "({col}.cast('timestamp').cast('long') + ({n})).cast('timestamp')",
+    "seconds": "({col}.cast('timestamp').cast('long') + ({n})).cast('timestamp')",
+}
+
 # Map Alteryx DateTimeTrim mode strings to Spark date_trunc format strings
 _DATETIMETRIM_MODE_MAP: dict[str, str] = {
     "firstofmonth": "month",
@@ -148,6 +165,10 @@ class PySparkTranslator(BaseExpressionTranslator):
         if mapping.pyspark_template == "__DATETIMETRIM__":
             return self._translate_datetimetrim_pyspark(node, translated_args)
 
+        # Special case: DateTimeAdd(col, n, unit) — map unit string to correct Spark function
+        if mapping.pyspark_template == "__DATETIMEADD__":
+            return self._translate_datetimeadd_pyspark(node, translated_args)
+
         # Special case: DateTimeFormat(col, fmt) — convert strftime tokens to Java format
         if node.function_name == "DateTimeFormat" and len(node.arguments) == 2:
             fmt_arg = node.arguments[1]
@@ -207,6 +228,33 @@ class PySparkTranslator(BaseExpressionTranslator):
             self._warnings.append(f"DateTimeTrim: unknown mode '{mode_key}' — emitting as-is")
             return f'F.date_trunc("{mode_key}", {col_expr})'
         return f'F.date_trunc("{spark_mode}", {col_expr})'
+
+    def _translate_datetimeadd_pyspark(self, node: FunctionCall, translated_args: list[str]) -> str:
+        """Translate DateTimeAdd(col, n, unit) to the appropriate Spark date function."""
+        if len(translated_args) < 2:
+            return "F.lit(None)"
+        col_expr = translated_args[0]
+        n_expr = translated_args[1] if len(translated_args) >= 2 else "1"
+        if len(translated_args) < 3:
+            return f"F.date_add({col_expr}, {n_expr})"
+
+        unit_arg = node.arguments[2]
+        if isinstance(unit_arg, Literal) and unit_arg.literal_type == "string":
+            unit_key = str(unit_arg.value).lower()
+        else:
+            self._warnings.append(
+                "DateTimeAdd: unit is not a string literal — defaulting to date_add (days)"
+            )
+            return f"F.date_add({col_expr}, {n_expr})"
+
+        template = _DATETIMEADD_UNIT_MAP.get(unit_key)
+        if template is None:
+            self._warnings.append(
+                f"DateTimeAdd: unknown unit '{unit_key}' — defaulting to date_add (days)"
+            )
+            return f"F.date_add({col_expr}, {n_expr})"
+
+        return template.replace("{col}", col_expr).replace("{n}", n_expr)
 
     def _visit_IfExpr(self, node: IfExpr) -> str:
         cond = self._visit(node.condition)
