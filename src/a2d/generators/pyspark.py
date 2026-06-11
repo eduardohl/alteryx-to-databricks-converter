@@ -321,6 +321,11 @@ class PySparkGenerator(CodeGenerator):
                 option_chain = opt_parts
             lines = [f'{out_var} = spark.read.format("{fmt}"){option_chain}.load("{path}")']
 
+        if node.conversion_notes:
+            note_lines = [f"# TODO: manual conversion required — {node.conversion_notes[0]}"]
+            note_lines += [f"# {note}" for note in node.conversion_notes[1:]]
+            lines = note_lines + lines
+
         if node.record_limit is not None:
             lines.append(f"{out_var} = {out_var}.limit({node.record_limit})")
 
@@ -438,6 +443,7 @@ class PySparkGenerator(CodeGenerator):
             if need_false:
                 lines.append(f"{out_false} = {inp}.limit(0)  # empty — no filter expression available")
         else:
+            _comment_suffix = ""
             try:
                 expr = self._translator.translate_string(node.expression)
                 warnings.extend(self._translator.warnings)
@@ -447,21 +453,22 @@ class PySparkGenerator(CodeGenerator):
                     f"# TODO: manual conversion required — filter expression parse failed: {exc}",
                     f'# Original Alteryx expression: "{safe_expr}"',
                 ]
-                expr = "F.lit(True)  # PLACEHOLDER — replace with correct filter condition"
+                expr = "F.lit(True)"
+                _comment_suffix = "  # PLACEHOLDER — replace with correct filter condition"
                 warnings.append(f"Filter expression fallback for node {node.node_id}: {exc}")
 
             if need_true and need_false:
                 # Both branches needed — use a shared condition variable
                 lines = [
-                    f"_filter_cond_{node.node_id} = {expr}",
+                    f"_filter_cond_{node.node_id} = {expr}{_comment_suffix}",
                     f"{out_true} = {inp}.filter(_filter_cond_{node.node_id})",
                     f"{out_false} = {inp}.filter(~(_filter_cond_{node.node_id}))",
                 ]
             elif need_true:
-                lines = [f"{out_true} = {inp}.filter({expr})"]
+                lines = [f"{out_true} = {inp}.filter({expr}){_comment_suffix}"]
             else:
                 # Only false branch needed (rare)
-                lines = [f"{out_false} = {inp}.filter(~({expr}))"]
+                lines = [f"{out_false} = {inp}.filter(~({expr})){_comment_suffix}"]
 
         output_vars: dict[str, str] = {"Output": out_true}
         if need_true:
@@ -482,6 +489,7 @@ class PySparkGenerator(CodeGenerator):
         warnings: list[str] = []
 
         for formula in node.formulas:
+            _comment_suffix = ""
             try:
                 fixed_expression = self._fix_implicit_field_refs(formula.expression, formula.output_field)
                 expr = self._translator.translate_string(fixed_expression)
@@ -490,9 +498,10 @@ class PySparkGenerator(CodeGenerator):
                 safe_expr = formula.expression.replace('"', "'")
                 lines.append(f"# TODO: manual conversion required — expression parse failed: {exc}")
                 lines.append(f'# Original Alteryx expression: "{safe_expr}"')
-                expr = "F.lit(None)  # PLACEHOLDER"
+                expr = "F.lit(None)"
+                _comment_suffix = "  # PLACEHOLDER"
                 warnings.append(f"Formula expression fallback for '{formula.output_field}': {exc}")
-            lines.append(f'{out_var} = {out_var}.withColumn("{formula.output_field}", {expr})')
+            lines.append(f'{out_var} = {out_var}.withColumn("{formula.output_field}", {expr}){_comment_suffix}')
 
         return NodeCodeResult(
             code_lines=lines,
