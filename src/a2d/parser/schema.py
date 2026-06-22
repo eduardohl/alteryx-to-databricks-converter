@@ -124,6 +124,7 @@ PLUGIN_NAME_MAP: dict[str, tuple[str, str]] = {
     "LockInGui.LockInUnion.LockInUnion":                         ("LockInUnion",        "io"),
     "LockInGui.LockInDynamicInput.LockInDynamicInput":           ("LockInDynamicInput", "io"),
     "LockInGui.LockInSelect.LockInSelect":                       ("LockInSelect",       "io"),
+    "LockInGui.LockInFilter.LockInFilter":                       ("LockInFilter",       "io"),
     "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput": ("Output", "io"),
     "AlteryxBasePluginsGui.TextInput.TextInput": ("TextInput", "io"),
     "AlteryxBasePluginsGui.BrowseV2.BrowseV2": ("Browse", "io"),
@@ -366,6 +367,11 @@ TOOL_METADATA: dict[str, ToolMetadata] = {
         "deterministic",
         "Server-side column selection; maps to DataFrame select/drop",
         "DataFrame.select / drop",
+    ),
+    "LockInFilter": ToolMetadata(
+        "deterministic",
+        "Server-side filter push-down; maps to DataFrame.filter",
+        "DataFrame.filter",
     ),
     # ── Preparation ─────────────────────────────────────────────────────
     "Select": ToolMetadata(

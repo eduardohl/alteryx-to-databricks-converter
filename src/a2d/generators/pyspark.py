@@ -305,7 +305,19 @@ class PySparkGenerator(CodeGenerator):
             if node.encoding and node.encoding != "utf-8":
                 options.append(f'"encoding", "{node.encoding}"')
 
-        if node.source_type == "database" and node.query:
+        if node.dynamic_query_field:
+            upstream = self._get_single_input(input_vars) if input_vars else "df_upstream"
+            qvar = f"_query_{node.node_id}"
+            lines = [
+                f'# LockInDynamicInput: SQL query comes from column "{node.dynamic_query_field}" of the upstream DataFrame.',
+                f"# TODO: Replace bracket-notation table refs ([connection].db.schema.table) with your Databricks catalog path.",
+                f'{qvar} = {upstream}.first()["{node.dynamic_query_field}"]',
+                f"{out_var} = spark.sql({qvar})",
+            ]
+            warnings.append(
+                f"Input node {node.node_id}: LockInDynamicInput — update table refs in '{node.dynamic_query_field}' column to Unity Catalog format"
+            )
+        elif node.source_type == "database" and node.query:
             lines = []
             if node.connection_string:
                 lines.append(f"# Source database: {node.connection_string}")
@@ -572,6 +584,9 @@ class PySparkGenerator(CodeGenerator):
         if drops:
             drop_args = ", ".join(f'"{d}"' for d in drops)
             lines.append(f"{out_var} = {out_var}.drop({drop_args})")
+
+        if not renames and not drops:
+            lines[0] += "  # select all columns — passthrough"
 
         return NodeCodeResult(
             code_lines=lines,

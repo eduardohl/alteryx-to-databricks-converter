@@ -63,6 +63,7 @@ class ReadNode(IRNode):
     encoding: str = "utf-8"
     record_limit: int | None = None
     field_info: list[Any] = field(default_factory=list)
+    dynamic_query_field: str | None = None  # column name holding SQL string (LockInDynamicInput)
 
 
 @dataclass

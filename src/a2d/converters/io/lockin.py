@@ -7,6 +7,9 @@ Alteryx tools and map directly to the same IR nodes.
 
 from __future__ import annotations
 
+import re
+from dataclasses import replace
+
 from a2d.config import ConversionConfig
 from a2d.converters.registry import ConverterRegistry, ToolConverter
 from a2d.converters.utils import ensure_list, safe_get
@@ -21,6 +24,7 @@ from a2d.ir.nodes import (
     UnionNode,
 )
 from a2d.converters.join.join import JoinConverter
+from a2d.converters.preparation.filter import FilterConverter
 from a2d.converters.preparation.select import SelectConverter
 from a2d.parser.schema import ParsedNode
 
@@ -239,7 +243,15 @@ class LockInDynamicInputConverter(ToolConverter):
 
     def convert(self, parsed_node: ParsedNode, config: ConversionConfig) -> IRNode:
         cfg = parsed_node.configuration
-        connection_string = safe_get(cfg, "Connection") or safe_get(cfg, "ConnectionString") or ""
+        connection_string = safe_get(cfg, "ConnectionNameField") or safe_get(cfg, "Connection") or ""
+        query_field = safe_get(cfg, "QueryField") or ""
+
+        notes = []
+        if not query_field:
+            notes = [
+                "LockInDynamicInput: could not determine query field from XML.",
+                "Manually collect the SQL string from the upstream DataFrame and call spark.sql().",
+            ]
 
         return ReadNode(
             node_id=parsed_node.tool_id,
@@ -247,12 +259,8 @@ class LockInDynamicInputConverter(ToolConverter):
             original_plugin_name=parsed_node.plugin_name,
             annotation=parsed_node.annotation,
             position=parsed_node.position,
-            conversion_confidence=0.2,
-            conversion_notes=[
-                "LockInDynamicInput executes a SQL query string stored in an upstream column value.",
-                "Manual conversion required: collect the query string from the upstream DataFrame row,",
-                "then call spark.sql(query_string) to execute it.",
-            ],
+            conversion_confidence=0.7 if query_field else 0.2,
+            conversion_notes=notes,
             source_type="database",
             file_path="",
             connection_string=connection_string,
@@ -263,6 +271,7 @@ class LockInDynamicInputConverter(ToolConverter):
             delimiter=",",
             encoding="utf-8",
             record_limit=None,
+            dynamic_query_field=query_field or None,
         )
 
 
@@ -279,3 +288,36 @@ class LockInSelectConverter(ToolConverter):
 
     def convert(self, parsed_node: ParsedNode, config: ConversionConfig) -> IRNode:
         return SelectConverter().convert(parsed_node, config)
+
+
+def _sql_expr_to_alteryx(expr: str) -> str:
+    """Convert SQL-style expression notation to Alteryx expression syntax.
+
+    LockInFilter uses SQL push-down syntax: "column" in ('A','B')
+    FilterConverter expects Alteryx notation:  [column] IN ("A","B")
+    """
+    # SQL double-quoted identifiers ("col") → Alteryx bracket notation ([col])
+    expr = re.sub(r'"(\w+)"', r'[\1]', expr)
+    # SQL single-quoted strings ('val') → Alteryx double-quoted strings ("val")
+    expr = re.sub(r"'([^']*)'", r'"\1"', expr)
+    return expr
+
+
+@ConverterRegistry.register
+class LockInFilterConverter(ToolConverter):
+    """Converts LockIn Filter (server-side WHERE clause) to :class:`FilterNode`.
+
+    LockIn uses SQL-style expressions ("column" in ('A','B')); pre-processes
+    to Alteryx bracket notation before delegating to FilterConverter.
+    """
+
+    @property
+    def supported_tool_types(self) -> list[str]:
+        return ["LockInFilter"]
+
+    def convert(self, parsed_node: ParsedNode, config: ConversionConfig) -> IRNode:
+        cfg = dict(parsed_node.configuration)
+        raw_expr = cfg.get("Expression", "")
+        if raw_expr:
+            cfg["Expression"] = _sql_expr_to_alteryx(raw_expr)
+        return FilterConverter().convert(replace(parsed_node, configuration=cfg), config)
