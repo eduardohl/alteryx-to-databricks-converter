@@ -1,5 +1,11 @@
 # alteryx2databricks (a2d)
 
+> [!IMPORTANT]
+> ## 📦 This repository has moved
+> This project is now maintained at **[databricks-solutions/alteryx-to-databricks-converter](https://github.com/databricks-solutions/alteryx-to-databricks-converter)**.
+>
+> Please use the new repository for the latest code, issues, and updates — **this repository is no longer maintained.**
+
 **Automatically convert Alteryx workflows into runnable Databricks code — no Alteryx license required.**
 
 Upload a `.yxmd` file. Get back a PySpark notebook, Spark Declarative Pipelines (DLT) pipeline, Spark SQL script, and Lakeflow Designer pipeline — all in a single run, ready to run in Databricks.
